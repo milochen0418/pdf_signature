@@ -9,13 +9,23 @@ let isDrawing = false;
 let startX = 0;
 let startY = 0;
 let tempBox = null;
+let lastBox = null;
+
+const getSurfaceMetrics = (surface) => {
+    const rect = surface.getBoundingClientRect();
+    const baseWidth = surface.offsetWidth || rect.width || 1;
+    const baseHeight = surface.offsetHeight || rect.height || 1;
+    const scaleX = rect.width / baseWidth || 1;
+    const scaleY = rect.height / baseHeight || 1;
+    return { rect, scaleX, scaleY };
+};
 
 document.addEventListener('mousedown', (e) => {
     const surface = document.getElementById('draw-surface');
     if (!surface || e.target !== surface) return;
 
     isDrawing = true;
-    const rect = surface.getBoundingClientRect();
+    const { rect } = getSurfaceMetrics(surface);
     startX = e.clientX - rect.left;
     startY = e.clientY - rect.top;
 
@@ -32,7 +42,7 @@ document.addEventListener('mousedown', (e) => {
 document.addEventListener('mousemove', (e) => {
     if (!isDrawing || !tempBox) return;
     const surface = document.getElementById('draw-surface');
-    const rect = surface.getBoundingClientRect();
+    const { rect, scaleX, scaleY } = getSurfaceMetrics(surface);
 
     // Calculate coordinates relative to the overlay
     const currentX = e.clientX - rect.left;
@@ -43,10 +53,12 @@ document.addEventListener('mousemove', (e) => {
     const left = currentX < startX ? currentX : startX;
     const top = currentY < startY ? currentY : startY;
 
-    tempBox.style.width = width + 'px';
-    tempBox.style.height = height + 'px';
-    tempBox.style.left = left + 'px';
-    tempBox.style.top = top + 'px';
+    lastBox = { left, top, width, height };
+
+    tempBox.style.width = (width / scaleX) + 'px';
+    tempBox.style.height = (height / scaleY) + 'px';
+    tempBox.style.left = (left / scaleX) + 'px';
+    tempBox.style.top = (top / scaleY) + 'px';
 });
 
 document.addEventListener('mouseup', (e) => {
@@ -55,12 +67,11 @@ document.addEventListener('mouseup', (e) => {
 
     if (tempBox) {
         const surface = document.getElementById('draw-surface');
-        const rect = surface.getBoundingClientRect();
-
-        const width = parseFloat(tempBox.style.width);
-        const height = parseFloat(tempBox.style.height);
-        const left = parseFloat(tempBox.style.left);
-        const top = parseFloat(tempBox.style.top);
+        const { rect } = getSurfaceMetrics(surface);
+        const width = lastBox ? lastBox.width : 0;
+        const height = lastBox ? lastBox.height : 0;
+        const left = lastBox ? lastBox.left : 0;
+        const top = lastBox ? lastBox.top : 0;
 
         tempBox.remove();
         tempBox = null;
