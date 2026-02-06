@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "pdf-signature"
+version = "0.1.0"
+description = "Lightweight web app for PDF signing"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+packages = [{ include = "pdf_signature" }]
+
+[tool.poetry.dependencies]
+python = "~3.11"
+reflex = "0.8.24.post1"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
