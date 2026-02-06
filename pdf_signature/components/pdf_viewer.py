@@ -46,9 +46,47 @@ def pdf_viewer_canvas() -> rx.Component:
     """The canvas element where PDF.js will render."""
     return rx.el.div(
         rx.el.div(
-            rx.el.canvas(
-                id="pdf-canvas",
-                class_name="shadow-2xl border border-gray-200 bg-white rounded-sm",
+            rx.cond(
+                PDFState.page_image_url != "",
+                rx.image(
+                    src=PDFState.page_image_url,
+                    class_name="shadow-2xl border border-gray-200 bg-white rounded-sm max-w-full",
+                ),
+                rx.el.div(
+                    class_name="shadow-2xl border border-gray-200 bg-white rounded-sm w-[640px] h-[820px]",
+                ),
+            ),
+            rx.cond(
+                PDFState.is_rendering,
+                rx.el.div(
+                    rx.el.div(
+                        rx.spinner(size="3", class_name="text-blue-500"),
+                        rx.el.p(
+                            "Rendering PDF...",
+                            class_name="mt-2 text-sm text-gray-600",
+                        ),
+                        class_name="flex flex-col items-center",
+                    ),
+                    class_name="absolute inset-0 bg-white/80 backdrop-blur-sm z-30 flex items-center justify-center",
+                ),
+            ),
+            rx.cond(
+                PDFState.render_error != "",
+                rx.el.div(
+                    rx.el.div(
+                        rx.icon("message_circle_warning", class_name="h-6 w-6 text-red-500"),
+                        rx.el.p(
+                            "Failed to render PDF.",
+                            class_name="mt-2 text-sm font-semibold text-gray-800",
+                        ),
+                        rx.el.p(
+                            PDFState.render_error,
+                            class_name="mt-1 text-xs text-gray-500 max-w-xs text-center",
+                        ),
+                        class_name="flex flex-col items-center",
+                    ),
+                    class_name="absolute inset-0 bg-white/90 z-30 flex items-center justify-center",
+                ),
             ),
             rx.el.div(
                 rx.foreach(PDFState.signature_boxes, render_signature_box),
@@ -65,6 +103,10 @@ def pdf_viewer_canvas() -> rx.Component:
                 id="new-box-data", class_name="hidden", on_change=PDFState.add_box
             ),
             class_name="relative inline-block m-auto",
+            style={
+                "transform": f"scale({PDFState.zoom_level})",
+                "transformOrigin": "top center",
+            },
             id="pdf-wrapper",
         ),
         class_name="flex w-full overflow-auto bg-gray-100/50 p-8 custom-scrollbar justify-center items-start",
@@ -144,6 +186,12 @@ def pdf_controls() -> rx.Component:
                     on_click=PDFState.clear_boxes,
                     class_name="flex items-center gap-2 px-3 py-1.5 hover:bg-red-50 text-red-600 rounded-lg font-medium text-sm transition-colors",
                 ),
+            ),
+            rx.el.button(
+                rx.icon("download", class_name="h-4 w-4"),
+                "Export PDF",
+                on_click=PDFState.export_signed_pdf,
+                class_name="flex items-center gap-2 px-3 py-1.5 bg-gray-900 text-white rounded-lg font-medium text-sm hover:bg-gray-800 transition-colors",
             ),
             class_name="flex items-center gap-2 pl-4",
         ),

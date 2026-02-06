@@ -98,6 +98,15 @@ def sidebar() -> rx.Component:
                         class_name="flex items-center gap-3 p-3 bg-blue-50 rounded-xl border border-blue-100",
                     ),
                     rx.cond(
+                        PDFState.signed_pdf_url != "",
+                        rx.el.a(
+                            "Download Signed PDF",
+                            href=PDFState.signed_pdf_url,
+                            download=True,
+                            class_name="mt-4 inline-flex items-center justify-center w-full px-4 py-2 text-sm font-semibold text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors",
+                        ),
+                    ),
+                    rx.cond(
                         PDFState.signature_boxes.length() > 0,
                         rx.el.div(
                             rx.el.h3(
