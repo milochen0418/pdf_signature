@@ -3,13 +3,26 @@ from pdf_signature.states.pdf_state import PDFState
 
 sig_pad_init_js = """
 var signaturePad = null;
+var sigPadInitAttempts = 0;
+
 function initSigPad() {
     const canvas = document.getElementById('signature-pad');
-    if (canvas) {
-        signaturePad = new SignaturePad(canvas, {
-            backgroundColor: 'rgb(255, 255, 255)'
-        });
+    if (!canvas) return;
+
+    if (typeof SignaturePad === 'undefined') {
+        // Wait for the script loader fallback to finish.
+        if (sigPadInitAttempts < 15) {
+            sigPadInitAttempts += 1;
+            setTimeout(initSigPad, 150);
+        } else {
+            console.warn('SignaturePad library still missing after retries.');
+        }
+        return;
     }
+
+    signaturePad = new SignaturePad(canvas, {
+        backgroundColor: 'rgb(255, 255, 255)'
+    });
 }
 
 function clearSigPad() {

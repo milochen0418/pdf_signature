@@ -4,6 +4,43 @@ from pdf_signature.components.sidebar import sidebar
 from pdf_signature.components.pdf_viewer import pdf_controls, pdf_viewer_canvas
 from pdf_signature.components.signature_modal import signature_modal, sig_pad_init_js
 
+sig_pad_loader_js = """
+(function() {
+    const sources = [
+        'https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js',
+        'https://unpkg.com/signature_pad@4.1.7/dist/signature_pad.umd.min.js',
+        '/assets/signature_pad.umd.min.js'
+    ];
+
+    let loaded = false;
+    let attempt = 0;
+
+    function loadNext() {
+        if (loaded || attempt >= sources.length) return;
+        const src = sources[attempt++];
+
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+
+        script.onload = () => {
+            loaded = true;
+            window.__signaturePadLoaded = true;
+            console.info('[SignaturePad] loaded from', src);
+        };
+
+        script.onerror = () => {
+            console.warn('[SignaturePad] failed to load from', src);
+            loadNext();
+        };
+
+        document.head.appendChild(script);
+    }
+
+    loadNext();
+})();
+"""
+
 drawing_js = """
 let isDrawing = false;
 let startX = 0;
@@ -135,9 +172,7 @@ def index() -> rx.Component:
             ),
             class_name="flex min-h-screen bg-white",
         ),
-        rx.script(
-            src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"
-        ),
+        rx.script(sig_pad_loader_js),
         rx.script(sig_pad_init_js),
         rx.script(drawing_js),
         class_name="font-['Inter'] selection:bg-blue-100",
