@@ -15,7 +15,8 @@ def signature_svg(paths: list[str]) -> rx.Component:
                 stroke_linejoin="round",
             ),
         ),
-        viewBox="0 0 100 100",
+        view_box="0 0 520 220",
+        preserve_aspect_ratio="none",
         class_name="w-full h-full",
     )
 

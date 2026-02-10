@@ -16,8 +16,8 @@ def signature_strokes_svg() -> rx.Component:
                 stroke_linejoin="round",
             ),
         ),
-        viewBox="0 0 100 100",
-        class_name="absolute inset-0",
+        view_box="0 0 520 220",
+        class_name="absolute inset-0 w-full h-full",
     )
 
 
@@ -40,8 +40,8 @@ def signature_pad_surface() -> rx.Component:
         background_color="transparent",
         class_name="rounded-lg select-none",
         style={"userSelect": "none", "WebkitUserSelect": "none"},
-        on_mouse_down=PDFState.start_signature(MousePosition.x, MousePosition.y),
-        on_mouse_up=PDFState.stop_signature(MousePosition.x, MousePosition.y),
+        on_mouse_down=PDFState.start_signature,
+        on_mouse_up=PDFState.stop_signature,
     )
 
 

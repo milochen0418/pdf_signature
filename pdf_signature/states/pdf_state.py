@@ -55,6 +55,7 @@ class PDFState(rx.State):
     drawing_current_x: float = 0
     drawing_current_y: float = 0
 
+    @rx.event
     def toggle_drawing_mode(self):
         """Toggle the signature box drawing mode."""
         self.is_drawing_box = not self.is_drawing_box
@@ -142,9 +143,6 @@ class PDFState(rx.State):
         self.drawing_current_x = 0
         self.drawing_current_y = 0
 
-    def delete_box(self, box_id: str):
-        """Delete a signature box."""
-        self.signature_boxes = [box for box in self.signature_boxes if box["id"] != box_id]
     def _emit_interaction_log(self, message: str):
         logging.getLogger("interaction").info(message)
         return rx.call_script(f"console.log({json.dumps(message)})")
@@ -220,28 +218,28 @@ class PDFState(rx.State):
         return self._emit_interaction_log("signature:clear")
 
     @rx.event
-    def start_signature(self, x: int, y: int):
+    def start_signature(self, mouse: dict):
         """Start capturing a signature stroke."""
         if not self.is_signing:
             return
         self.signature_is_drawing = True
-        self._append_signature_point({"x": x, "y": y})
+        self._append_signature_point(mouse)
         return self._emit_interaction_log(
             "signature:start "
-            f"x={x} y={y} "
+            f"x={mouse.get('x', 0)} y={mouse.get('y', 0)} "
             f"pad=({self.signature_pad_width}x{self.signature_pad_height})"
         )
 
     @rx.event
-    def stop_signature(self, x: int, y: int):
+    def stop_signature(self, mouse: dict):
         """Stop capturing a signature stroke."""
         if not self.is_signing:
             return
-        self._append_signature_point({"x": x, "y": y})
+        self._append_signature_point(mouse)
         self.signature_is_drawing = False
         return self._emit_interaction_log(
             "signature:stop "
-            f"x={x} y={y} "
+            f"x={mouse.get('x', 0)} y={mouse.get('y', 0)} "
             f"strokes={len(self.signature_strokes)}"
         )
 
@@ -250,22 +248,23 @@ class PDFState(rx.State):
         """Sample a point while drawing in the signature pad."""
         if not (self.is_signing and self.signature_is_drawing and defined):
             return
+        logging.info(f"sample_signature_point raw: x={x} y={y} pad=({self.signature_pad_width}x{self.signature_pad_height})")
         self._append_signature_point({"x": x, "y": y})
-        return self._emit_interaction_log(f"signature:sample x={x} y={y}")
 
     def _append_signature_point(self, mouse: dict[str, int]):
         if not mouse:
             return
         if self.signature_pad_width <= 0 or self.signature_pad_height <= 0:
             return
-        x_pct = (mouse.get("x", 0) / self.signature_pad_width) * 100.0
-        y_pct = (mouse.get("y", 0) / self.signature_pad_height) * 100.0
-        x_pct = max(0.0, min(100.0, x_pct))
-        y_pct = max(0.0, min(100.0, y_pct))
+        # Use raw pixel coordinates directly (matching SVG viewBox)
+        x_val = float(mouse.get("x", 0))
+        y_val = float(mouse.get("y", 0))
+        x_val = max(0.0, min(float(self.signature_pad_width), x_val))
+        y_val = max(0.0, min(float(self.signature_pad_height), y_val))
         if self.signature_strokes and self.signature_strokes[-1]:
-            dx = x_pct - self.signature_last_x
-            dy = y_pct - self.signature_last_y
-            if (dx * dx + dy * dy) < 0.15:
+            dx = x_val - self.signature_last_x
+            dy = y_val - self.signature_last_y
+            if (dx * dx + dy * dy) < 4.0:
                 return
         if not self.signature_strokes or not self.signature_is_drawing:
             self.signature_strokes.append([])
@@ -274,13 +273,13 @@ class PDFState(rx.State):
             self.signature_paths.append("")
         current_path = self.signature_paths[-1]
         if not self.signature_strokes[-1]:
-            current_path = f"M {x_pct:.2f} {y_pct:.2f}"
+            current_path = f"M {x_val:.2f} {y_val:.2f}"
         else:
-            current_path = f"{current_path} L {x_pct:.2f} {y_pct:.2f}"
-        self.signature_strokes[-1].append({"x": x_pct, "y": y_pct})
+            current_path = f"{current_path} L {x_val:.2f} {y_val:.2f}"
+        self.signature_strokes[-1].append({"x": x_val, "y": y_val})
         self.signature_paths[-1] = current_path
-        self.signature_last_x = x_pct
-        self.signature_last_y = y_pct
+        self.signature_last_x = x_val
+        self.signature_last_y = y_val
         self.signature_strokes = [list(stroke) for stroke in self.signature_strokes]
         self.signature_paths = list(self.signature_paths)
 
@@ -493,13 +492,15 @@ class PDFState(rx.State):
                 for stroke in strokes:
                     if len(stroke) < 2:
                         continue
+                    pad_w = float(self.signature_pad_width) or 1.0
+                    pad_h = float(self.signature_pad_height) or 1.0
                     for idx in range(1, len(stroke)):
                         p0 = stroke[idx - 1]
                         p1 = stroke[idx]
-                        x0 = rect.x0 + rect.width * (float(p0["x"]) / 100.0)
-                        y0 = rect.y0 + rect.height * (float(p0["y"]) / 100.0)
-                        x1 = rect.x0 + rect.width * (float(p1["x"]) / 100.0)
-                        y1 = rect.y0 + rect.height * (float(p1["y"]) / 100.0)
+                        x0 = rect.x0 + rect.width * (float(p0["x"]) / pad_w)
+                        y0 = rect.y0 + rect.height * (float(p0["y"]) / pad_h)
+                        x1 = rect.x0 + rect.width * (float(p1["x"]) / pad_w)
+                        y1 = rect.y0 + rect.height * (float(p1["y"]) / pad_h)
                         page.draw_line(
                             fitz.Point(x0, y0),
                             fitz.Point(x1, y1),
