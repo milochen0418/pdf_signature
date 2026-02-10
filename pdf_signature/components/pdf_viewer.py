@@ -126,7 +126,6 @@ def pdf_viewer_canvas() -> rx.Component:
                 rx.foreach(PDFState.signature_boxes, render_signature_box),
                 class_name="absolute inset-0 z-10",
             ),
-            rx.script(src="/draw_helpers.js"),
             rx.el.div(
                 rx.input(
                     # type="text", # rx.input might not support type="text" directly or implies it

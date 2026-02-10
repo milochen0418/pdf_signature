@@ -38,9 +38,10 @@ def signature_pad_surface() -> rx.Component:
         height=f"{PDFState.signature_pad_height}px",
         position="relative",
         background_color="transparent",
-        class_name="rounded-lg",
-        on_mouse_down=lambda: PDFState.start_signature(MousePosition.x, MousePosition.y),
-        on_mouse_up=lambda: PDFState.stop_signature(MousePosition.x, MousePosition.y),
+        class_name="rounded-lg select-none",
+        style={"userSelect": "none", "WebkitUserSelect": "none"},
+        on_mouse_down=PDFState.start_signature(MousePosition.x, MousePosition.y),
+        on_mouse_up=PDFState.stop_signature(MousePosition.x, MousePosition.y),
     )
 
 
@@ -59,15 +60,15 @@ def signature_modal() -> rx.Component:
                     rx.cond(
                         PDFState.is_signing,
                         rx.el.div(
-                            signature_pad_surface(),
                             rx.cond(
                                 PDFState.signature_paths.length() == 0,
                                 rx.el.span(
                                     "Sign here",
-                                    class_name="absolute inset-0 flex items-center justify-center text-xs text-gray-400",
+                                    class_name="absolute inset-0 flex items-center justify-center text-xs text-gray-400 pointer-events-none select-none z-0",
                                 ),
                             ),
-                            class_name="relative border border-gray-200 rounded-lg shadow-inner bg-white",
+                            signature_pad_surface(),
+                            class_name="relative border border-gray-200 rounded-lg shadow-inner bg-white select-none",
                             style={
                                 "width": f"{PDFState.signature_pad_width}px",
                                 "height": f"{PDFState.signature_pad_height}px",

@@ -12,6 +12,7 @@ from pdf_signature.components.signature_modal import signature_modal
 
 def index() -> rx.Component:
     return rx.el.main(
+        rx.script(src="/draw_helpers.js"),
         signature_modal(),
         rx.el.div(
             sidebar(),
