@@ -3,6 +3,7 @@ set -euo pipefail
 
 SHOW_HELP=false
 REMOVE_ONLY=false
+WITH_RERUN=false
 
 # Recreate the Poetry env and clear Reflex build artifacts.
 
@@ -19,6 +20,7 @@ Usage: ./proj_reinstall.sh [options]
 Options:
   --help, -h       Show this help and exit.
   --remove-only     Remove existing Poetry envs and clean artifacts; skip creating a new env and installing deps.
+  --with-rerun      After install, run: poetry run ./reflex_rerun.sh
 EOF
 }
 
@@ -115,6 +117,9 @@ parse_args() {
       --remove-only)
         REMOVE_ONLY=true
         ;;
+      --with-rerun)
+        WITH_RERUN=true
+        ;;
       *)
         log "Unknown argument: $1"
         usage
@@ -142,6 +147,10 @@ main() {
     exit 0
   fi
   recreate_poetry_env
+  if $WITH_RERUN; then
+    log "Running reflex_rerun.sh via Poetry"
+    (cd "$ROOT_DIR" && poetry run ./reflex_rerun.sh)
+  fi
   log "Done"
 }
 
