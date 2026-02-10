@@ -26,6 +26,7 @@ sig_pad_loader_js = """
         script.onload = () => {
             loaded = true;
             window.__signaturePadLoaded = true;
+            window.dispatchEvent(new Event('signaturepad:loaded'));
             console.info('[SignaturePad] loaded from', src);
         };
 

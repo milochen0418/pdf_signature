@@ -5,9 +5,23 @@ sig_pad_init_js = """
 var signaturePad = null;
 var sigPadInitAttempts = 0;
 
-function initSigPad() {
+function resizeCanvasForHiDpi(canvas) {
+    const ratio = Math.max(window.devicePixelRatio || 1, 1);
+    const width = canvas.offsetWidth || canvas.width;
+    const height = canvas.offsetHeight || canvas.height;
+    if (!width || !height) return false;
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.scale(ratio, ratio);
+    return true;
+}
+
+function initSigPad(force) {
     const canvas = document.getElementById('signature-pad');
     if (!canvas) return;
+
+    if (signaturePad && !force) return; // Already initialized
 
     if (typeof SignaturePad === 'undefined') {
         // Wait for the script loader fallback to finish.
@@ -20,9 +34,14 @@ function initSigPad() {
         return;
     }
 
+    // Ensure canvas has proper pixel ratio; do this before creating the pad
+    resizeCanvasForHiDpi(canvas);
+    canvas.style.touchAction = 'none';
+
     signaturePad = new SignaturePad(canvas, {
         backgroundColor: 'rgb(255, 255, 255)'
     });
+    console.info('[SignaturePad] initialized');
 }
 
 function clearSigPad() {
@@ -57,7 +76,12 @@ const observer = new MutationObserver((mutations) => {
 document.addEventListener('DOMContentLoaded', () => {
     const modal = document.getElementById('sig-modal-container');
     if (modal) observer.observe(modal, { attributes: true });
+    initSigPad();
 });
+
+// Also respond to loader success (dispatched by loader script)
+window.addEventListener('signaturepad:loaded', () => setTimeout(() => initSigPad(true), 0));
+window.addEventListener('resize', () => initSigPad(true));
 """
 
 
