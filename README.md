@@ -9,6 +9,19 @@ Key goals:
 - Clear, minimal signing workflow
 - Reliable export of the signed document
 
+## Product Overview
+
+### Sign Your PDF
+
+Upload a PDF and draw your signature directly on the page. The app provides an intuitive signing experience — simply select the page, open the signature pad, and sign.
+
+![Signing a PDF](docs/images/do-signing-on-pdf.png)
+
+### Export the Signed PDF
+
+Once you are happy with the signature placement, export the final signed PDF with one click. The signature is permanently embedded into the document and ready for sharing or archiving.
+
+![Export Signed PDF](docs/images/export-signed-pdf.png)
 
 ## Getting Started
 
