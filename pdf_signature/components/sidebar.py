@@ -103,6 +103,8 @@ def sidebar() -> rx.Component:
                             "Download Signed PDF",
                             href=PDFState.signed_pdf_url,
                             download=True,
+                            target="_blank",
+                            rel="noopener noreferrer",
                             class_name="mt-4 inline-flex items-center justify-center w-full px-4 py-2 text-sm font-semibold text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors",
                         ),
                     ),
