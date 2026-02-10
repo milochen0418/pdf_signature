@@ -4,173 +4,133 @@ from pdf_signature.components.sidebar import sidebar
 from pdf_signature.components.pdf_viewer import pdf_controls, pdf_viewer_canvas
 from pdf_signature.components.signature_modal import signature_modal, sig_pad_init_js
 
-sig_pad_loader_js = """
-(function() {
-    // Reflex copies files in /assets to the public root (e.g. /signature_pad.umd.min.js)
-    // so try both root and /assets prefixes before falling back to CDNs.
-    const sources = [
-        '/signature_pad.umd.min.js',
-        '/assets/signature_pad.umd.min.js',
-        'https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js',
-        'https://unpkg.com/signature_pad@4.1.7/dist/signature_pad.umd.min.js'
-    ];
-
-    let loaded = false;
-    let attempt = 0;
-    let timeoutId = null;
-    const fallbackDelay = 2500; // bail out if a CDN request hangs
-
-    function markLoaded(src) {
-        loaded = true;
-        clearTimeout(timeoutId);
-        window.__signaturePadLoaded = true;
-        window.dispatchEvent(new Event('signaturepad:loaded'));
-        console.info('[SignaturePad] loaded from', src);
-    }
-
-    function scheduleFallback() {
-        clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => {
-            if (loaded) return;
-            console.warn('[SignaturePad] timed out; trying next source');
-            loadNext();
-        }, fallbackDelay);
-    }
-
-    function loadNext() {
-        if (loaded || attempt >= sources.length) return;
-        clearTimeout(timeoutId);
-        const src = sources[attempt++];
-
-        const script = document.createElement('script');
-        script.src = src;
-        script.async = true;
-
-        script.onload = () => {
-            // Some servers can respond with HTML (404) that still triggers onload.
-            if (typeof window.SignaturePad === 'undefined') {
-                console.warn('[SignaturePad] script loaded but global missing; trying next source', src);
-                loadNext();
-                return;
-            }
-            markLoaded(src);
-        };
-
-        script.onerror = () => {
-            clearTimeout(timeoutId);
-            console.warn('[SignaturePad] failed to load from', src);
-            loadNext();
-        };
-
-        document.head.appendChild(script);
-        scheduleFallback();
-    }
-
-    // If already present (hot reload), skip loading.
-    if (typeof window.SignaturePad !== 'undefined') {
-        markLoaded('preloaded');
-        return;
-    }
-
-    loadNext();
-})();
-"""
-
 drawing_js = """
-let isDrawing = false;
-let startX = 0;
-let startY = 0;
-let tempBox = null;
-let lastBox = null;
+(function() {
+    if (window.__drawSurfaceHandlersAttached) return;
+    window.__drawSurfaceHandlersAttached = true;
 
-const getSurfaceMetrics = (surface) => {
-    const rect = surface.getBoundingClientRect();
-    const baseWidth = surface.offsetWidth || rect.width || 1;
-    const baseHeight = surface.offsetHeight || rect.height || 1;
-    const scaleX = rect.width / baseWidth || 1;
-    const scaleY = rect.height / baseHeight || 1;
-    return { rect, scaleX, scaleY };
-};
+    let isDrawing = false;
+    let startX = 0;
+    let startY = 0;
+    let tempBox = null;
+    let lastBox = null;
+    let activePointerId = null;
 
-document.addEventListener('mousedown', (e) => {
-    const surface = document.getElementById('draw-surface');
-    if (!surface || !surface.contains(e.target)) return;
-    surface.style.pointerEvents = 'auto';
-    surface.style.touchAction = 'none';
+    const getSurfaceMetrics = (surface) => {
+        const rect = surface.getBoundingClientRect();
+        const baseWidth = surface.offsetWidth || rect.width || 1;
+        const baseHeight = surface.offsetHeight || rect.height || 1;
+        const scaleX = rect.width / baseWidth || 1;
+        const scaleY = rect.height / baseHeight || 1;
+        return { rect, scaleX, scaleY };
+    };
 
-    isDrawing = true;
-    const { rect } = getSurfaceMetrics(surface);
-    startX = e.clientX - rect.left;
-    startY = e.clientY - rect.top;
-
-    tempBox = document.createElement('div');
-    tempBox.style.position = 'absolute';
-    tempBox.style.border = '2px dashed #3b82f6';
-    tempBox.style.backgroundColor = 'rgba(59, 130, 246, 0.2)';
-    tempBox.style.left = startX + 'px';
-    tempBox.style.top = startY + 'px';
-    tempBox.style.pointerEvents = 'none'; // Ensure mouse events fall through during drag if needed
-    surface.appendChild(tempBox);
-});
-
-document.addEventListener('mousemove', (e) => {
-    if (!isDrawing || !tempBox) return;
-    const surface = document.getElementById('draw-surface');
-    const { rect, scaleX, scaleY } = getSurfaceMetrics(surface);
-
-    // Calculate coordinates relative to the overlay
-    const currentX = e.clientX - rect.left;
-    const currentY = e.clientY - rect.top;
-
-    const width = Math.abs(currentX - startX);
-    const height = Math.abs(currentY - startY);
-    const left = currentX < startX ? currentX : startX;
-    const top = currentY < startY ? currentY : startY;
-
-    lastBox = { left, top, width, height };
-
-    tempBox.style.width = (width / scaleX) + 'px';
-    tempBox.style.height = (height / scaleY) + 'px';
-    tempBox.style.left = (left / scaleX) + 'px';
-    tempBox.style.top = (top / scaleY) + 'px';
-});
-
-document.addEventListener('mouseup', (e) => {
-    if (!isDrawing) return;
-    isDrawing = false;
-
-    if (tempBox) {
-        const surface = document.getElementById('draw-surface');
-        const { rect } = getSurfaceMetrics(surface);
-        const width = lastBox ? lastBox.width : 0;
-        const height = lastBox ? lastBox.height : 0;
-        const left = lastBox ? lastBox.left : 0;
-        const top = lastBox ? lastBox.top : 0;
-
-        tempBox.remove();
-        tempBox = null;
-
-        // Ignore tiny accidental clicks (<5px)
-        if (width < 5 || height < 5) return;
-
-        // Calculate percentages to handle zooming
-        const pctX = (left / rect.width) * 100;
-        const pctY = (top / rect.height) * 100;
-        const pctW = (width / rect.width) * 100;
-        const pctH = (height / rect.height) * 100;
-
-        // Update hidden input to notify Reflex state
-        const input = document.getElementById('new-box-data');
-        if (input) {
-            // Use native setter to ensure React/Reflex picks up the change
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-            nativeInputValueSetter.call(input, JSON.stringify({x: pctX, y: pctY, w: pctW, h: pctH}));
-
-            const event = new Event('input', { bubbles: true });
-            input.dispatchEvent(event);
+    const isDrawEnabled = (surface) => surface?.dataset?.drawEnabled === 'true';
+    window.__drawDebugEnabled = true;
+    const logDraw = (...args) => {
+        if (window.__drawDebugEnabled) {
+            console.info('[DrawBox]', ...args);
         }
-    }
-});
+    };
+
+    const beginDraw = (e) => {
+        const surface = document.getElementById('draw-surface');
+        if (!surface || !surface.contains(e.target)) return;
+        if (!isDrawEnabled(surface)) {
+            logDraw('pointerdown ignored; draw disabled', {
+                pointerId: e.pointerId,
+                targetId: e.target?.id || null,
+            });
+            return;
+        }
+        if (activePointerId !== null && activePointerId !== e.pointerId) return;
+
+        activePointerId = e.pointerId;
+        surface.setPointerCapture?.(e.pointerId);
+        isDrawing = true;
+
+        const { rect } = getSurfaceMetrics(surface);
+        startX = e.clientX - rect.left;
+        startY = e.clientY - rect.top;
+        logDraw('begin', { pointerId: e.pointerId, startX, startY });
+
+        tempBox = document.createElement('div');
+        tempBox.style.position = 'absolute';
+        tempBox.style.border = '2px dashed #3b82f6';
+        tempBox.style.backgroundColor = 'rgba(59, 130, 246, 0.2)';
+        tempBox.style.left = startX + 'px';
+        tempBox.style.top = startY + 'px';
+        tempBox.style.pointerEvents = 'none';
+        surface.appendChild(tempBox);
+    };
+
+    const moveDraw = (e) => {
+        if (!isDrawing || !tempBox || e.pointerId !== activePointerId) return;
+        const surface = document.getElementById('draw-surface');
+        if (!surface) return;
+        if (!isDrawEnabled(surface)) return;
+        const { rect, scaleX, scaleY } = getSurfaceMetrics(surface);
+
+        const currentX = e.clientX - rect.left;
+        const currentY = e.clientY - rect.top;
+
+        const width = Math.abs(currentX - startX);
+        const height = Math.abs(currentY - startY);
+        const left = currentX < startX ? currentX : startX;
+        const top = currentY < startY ? currentY : startY;
+
+        lastBox = { left, top, width, height };
+
+        tempBox.style.width = (width / scaleX) + 'px';
+        tempBox.style.height = (height / scaleY) + 'px';
+        tempBox.style.left = (left / scaleX) + 'px';
+        tempBox.style.top = (top / scaleY) + 'px';
+    };
+
+    const endDraw = (e) => {
+        if (!isDrawing || e.pointerId !== activePointerId) return;
+        isDrawing = false;
+        activePointerId = null;
+
+        const surface = document.getElementById('draw-surface');
+        if (surface && !isDrawEnabled(surface)) return;
+        surface?.releasePointerCapture?.(e.pointerId);
+
+        if (tempBox) {
+            const rect = surface ? surface.getBoundingClientRect() : null;
+            const width = lastBox ? lastBox.width : 0;
+            const height = lastBox ? lastBox.height : 0;
+            const left = lastBox ? lastBox.left : 0;
+            const top = lastBox ? lastBox.top : 0;
+
+            tempBox.remove();
+            tempBox = null;
+
+            if (!rect) return;
+            if (width < 5 || height < 5) return;
+
+            const pctX = (left / rect.width) * 100;
+            const pctY = (top / rect.height) * 100;
+            const pctW = (width / rect.width) * 100;
+            const pctH = (height / rect.height) * 100;
+
+            const input = document.getElementById('new-box-data');
+            if (input) {
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                nativeInputValueSetter.call(input, JSON.stringify({x: pctX, y: pctY, w: pctW, h: pctH}));
+                const event = new Event('input', { bubbles: true });
+                input.dispatchEvent(event);
+            }
+            logDraw('end', { pointerId: e.pointerId, pctX, pctY, pctW, pctH });
+        }
+    };
+
+    document.addEventListener('pointerdown', beginDraw);
+    document.addEventListener('pointermove', moveDraw);
+    document.addEventListener('pointerup', endDraw);
+    document.addEventListener('pointercancel', endDraw);
+    logDraw('handlers attached');
+})();
 """
 
 
@@ -209,7 +169,6 @@ def index() -> rx.Component:
             ),
             class_name="flex min-h-screen bg-white",
         ),
-        rx.script(sig_pad_loader_js),
         rx.script(sig_pad_init_js),
         rx.script(drawing_js),
         class_name="font-['Inter'] selection:bg-blue-100",

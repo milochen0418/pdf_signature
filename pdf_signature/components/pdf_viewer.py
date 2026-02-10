@@ -92,12 +92,17 @@ def pdf_viewer_canvas() -> rx.Component:
                 rx.foreach(PDFState.signature_boxes, render_signature_box),
                 class_name="absolute inset-0 z-10",
             ),
-            rx.cond(
-                PDFState.is_draw_mode,
-                rx.el.div(
-                    id="draw-surface",
-                    class_name="absolute inset-0 cursor-crosshair z-20",
+            rx.el.div(
+                id="draw-surface",
+                data_draw_enabled=PDFState.is_draw_mode.to(str),
+                class_name=rx.cond(
+                    PDFState.is_draw_mode,
+                    "absolute inset-0 cursor-crosshair z-20 touch-none",
+                    "absolute inset-0 z-20 touch-none",
                 ),
+                style={
+                    "pointerEvents": rx.cond(PDFState.is_draw_mode, "auto", "none"),
+                },
             ),
             rx.el.input(
                 id="new-box-data", class_name="hidden", on_change=PDFState.add_box
