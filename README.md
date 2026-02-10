@@ -7,6 +7,8 @@ Key goals:
 - Clear, minimal signing workflow
 - Reliable export of the signed document
 
+> Before making changes, read the project guidelines in [AGENTS.md](AGENTS.md).
+
 
 ## Getting Started
 
