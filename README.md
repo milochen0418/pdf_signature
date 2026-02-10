@@ -1,5 +1,7 @@
 # PDF Signature
 
+> Important: Before working on this project, read [AGENTS.md](AGENTS.md) for required workflows and tooling expectations.
+
 PDF Signature is a lightweight web app for uploading PDF files, previewing pages, and adding signature overlays before saving the signed result. It focuses on a simple, guided flow so users can review a document, place a signature, and export the updated PDF in one place.
 
 Key goals:
