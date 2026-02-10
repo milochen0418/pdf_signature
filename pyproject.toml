@@ -10,7 +10,7 @@ packages = [{ include = "pdf_signature" }]
 python = "~3.11"
 reflex = "0.8.24.post1"
 pymupdf = "1.24.7"
-granian < "2.7.0"
+granian = "<2.7.0"
 
 [build-system]
 requires = ["poetry-core>=1.9.0"]
