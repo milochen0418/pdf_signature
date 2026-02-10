@@ -39,8 +39,8 @@ def signature_pad_surface() -> rx.Component:
         position="relative",
         background_color="transparent",
         class_name="rounded-lg",
-        on_mouse_down=PDFState.start_signature,
-        on_mouse_up=PDFState.stop_signature,
+        on_mouse_down=lambda: PDFState.start_signature(MousePosition.x, MousePosition.y),
+        on_mouse_up=lambda: PDFState.stop_signature(MousePosition.x, MousePosition.y),
     )
 
 
@@ -97,7 +97,7 @@ def signature_modal() -> rx.Component:
                     ),
                     class_name="flex justify-between items-center",
                 ),
-                class_name="bg-white rounded-2xl p-8 max-w-lg w-full relative z-50 shadow-2xl",
+                class_name="bg-white rounded-2xl p-8 max-w-2xl w-full relative z-50 shadow-2xl",
             ),
             class_name="fixed inset-0 flex items-center justify-center z-50 p-4",
         ),

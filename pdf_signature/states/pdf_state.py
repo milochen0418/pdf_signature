@@ -220,28 +220,28 @@ class PDFState(rx.State):
         return self._emit_interaction_log("signature:clear")
 
     @rx.event
-    def start_signature(self, mouse: dict[str, int]):
+    def start_signature(self, x: int, y: int):
         """Start capturing a signature stroke."""
         if not self.is_signing:
             return
         self.signature_is_drawing = True
-        self._append_signature_point(mouse)
+        self._append_signature_point({"x": x, "y": y})
         return self._emit_interaction_log(
             "signature:start "
-            f"x={mouse.get('x', 0)} y={mouse.get('y', 0)} "
+            f"x={x} y={y} "
             f"pad=({self.signature_pad_width}x{self.signature_pad_height})"
         )
 
     @rx.event
-    def stop_signature(self, mouse: dict[str, int]):
+    def stop_signature(self, x: int, y: int):
         """Stop capturing a signature stroke."""
         if not self.is_signing:
             return
-        self._append_signature_point(mouse)
+        self._append_signature_point({"x": x, "y": y})
         self.signature_is_drawing = False
         return self._emit_interaction_log(
             "signature:stop "
-            f"x={mouse.get('x', 0)} y={mouse.get('y', 0)} "
+            f"x={x} y={y} "
             f"strokes={len(self.signature_strokes)}"
         )
 
