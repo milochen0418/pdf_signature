@@ -49,6 +49,21 @@ Notes:
 - This keeps the app startup/restart behavior consistent and helps it run stably on the expected ports: frontend `3000`, backend `8000`.
 - If you must run Reflex directly, still do it via Poetry: `poetry run reflex run`.
 
+## 3.5) Recreate the env: use `proj_reinstall.sh`
+
+To fully rebuild the local Poetry environment and clean Reflex artifacts, run:
+
+```bash
+./proj_reinstall.sh
+```
+
+Flags:
+
+- `--remove-only`: only clean artifacts and remove Poetry envs; no new env/install.
+- `--with-rerun`: after reinstall, run `poetry run ./reflex_rerun.sh` automatically.
+
+The script will auto-run `poetry lock` if `poetry install` fails due to a stale lockfile.
+
 ## 4) Running E2E suites: prefer `run_test_suite.sh`
 
 E2E suites live under `testcases/<suite_name>/run_test.py`.
