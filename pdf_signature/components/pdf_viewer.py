@@ -2,34 +2,18 @@ import reflex as rx
 from pdf_signature.states.pdf_state import PDFState
 
 
-def signature_svg(paths: list[str]) -> rx.Component:
-    return rx.el.svg(
-        rx.foreach(
-            paths,
-            lambda path_d: rx.el.path(
-                d=path_d,
-                stroke="#111827",
-                stroke_width="2",
-                fill="none",
-                stroke_linecap="round",
-                stroke_linejoin="round",
-            ),
-        ),
-        view_box="0 0 520 220",
-        preserve_aspect_ratio="none",
-        class_name="w-full h-full",
-    )
-
-
 def render_signature_box(box: dict) -> rx.Component:
     """Render a single signature box overlay."""
-    paths = box["signature_paths"]
-    is_signed = paths.length() > 0
+    is_signed = box["signature_data_url"] != ""
     return rx.el.div(
         rx.cond(
             is_signed,
             rx.el.div(
-                signature_svg(paths),
+                rx.image(
+                    src=box["signature_data_url"],
+                    class_name="w-full h-full",
+                    style={"objectFit": "fill"},
+                ),
                 rx.el.div(
                     rx.icon(
                         "lamp_wall_down",

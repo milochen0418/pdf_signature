@@ -12,6 +12,8 @@ from pdf_signature.components.signature_modal import signature_modal
 
 def index() -> rx.Component:
     return rx.el.main(
+        rx.script(src="/signature_pad.umd.min.js"),
+        rx.script(src="/signature_pad_bridge.js"),
         rx.script(src="/draw_helpers.js"),
         signature_modal(),
         rx.el.div(

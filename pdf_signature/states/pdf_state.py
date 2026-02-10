@@ -3,6 +3,8 @@ import random
 import string
 import json
 import logging
+import re
+import base64
 from typing import TypedDict
 
 import fitz
@@ -16,8 +18,8 @@ class SignatureBox(TypedDict):
     w: float
     h: float
     page: int
-    signature_strokes: list[list[dict[str, float]]]
-    signature_paths: list[str]
+    signature_svg: str
+    signature_data_url: str
 
 
 class PDFState(rx.State):
@@ -40,11 +42,6 @@ class PDFState(rx.State):
     page_image_height: int = 0
     signed_filename: str = ""
     file_token: str = ""
-    signature_is_drawing: bool = False
-    signature_strokes: list[list[dict[str, float]]] = []
-    signature_paths: list[str] = []
-    signature_last_x: float = 0.0
-    signature_last_y: float = 0.0
     signature_pad_width: int = 520
     signature_pad_height: int = 220
 
@@ -130,8 +127,8 @@ class PDFState(rx.State):
             "w": rel_w,
             "h": rel_h,
             "page": self.current_page,
-            "signature_strokes": [],
-            "signature_paths": [],
+            "signature_svg": "",
+            "signature_data_url": "",
         }
         self.signature_boxes.append(new_box)
         
@@ -152,150 +149,51 @@ class PDFState(rx.State):
         """Open the signature pad for a specific box."""
         self.selected_box_id = box_id
         self.is_signing = True
-        self.signature_is_drawing = False
-        self.signature_strokes = []
-        self.signature_paths = []
-        log = self._emit_interaction_log(
+        yield self._emit_interaction_log(
             "signature:open "
             f"box_id={box_id} page={self.current_page} zoom={self.zoom_level:.2f}"
         )
-        for box in self.signature_boxes:
-            if box["id"] == box_id:
-                strokes = box.get("signature_strokes", [])
-                self.signature_strokes = [
-                    [point.copy() for point in stroke] for stroke in strokes
-                ]
-                box_paths = box.get("signature_paths")
-                if box_paths is None or len(box_paths) != len(self.signature_strokes):
-                    box_paths = self._build_paths_from_strokes(
-                        self.signature_strokes
-                    )
-                self.signature_paths = list(box_paths)
-                break
-        return log
+        yield rx.call_script(
+            "setTimeout(function(){ window.initSignaturePad('signature-canvas'); }, 150)"
+        )
 
     @rx.event
     def close_signing_modal(self):
         """Close the signature pad modal."""
         self.is_signing = False
         self.selected_box_id = ""
-        self.signature_is_drawing = False
-        self.signature_paths = []
-        self.signature_last_x = 0.0
-        self.signature_last_y = 0.0
         return self._emit_interaction_log("signature:close")
 
     @rx.event
-    def apply_signature(self):
-        """Apply the captured signature strokes to the selected box."""
+    def apply_signature_data(self, svg_string: str):
+        """Apply signature SVG from signature_pad to the selected box."""
+        if not svg_string:
+            # Canvas was empty – just close without changing existing signature
+            self.is_signing = False
+            self.selected_box_id = ""
+            return
+        # Build data-URL for display (stretch to fill box)
+        svg_display = svg_string.replace(
+            "<svg ", '<svg preserveAspectRatio="none" ', 1
+        )
+        data_url = "data:image/svg+xml;base64," + base64.b64encode(
+            svg_display.encode("utf-8")
+        ).decode("ascii")
         for box in self.signature_boxes:
             if box["id"] == self.selected_box_id:
-                box["signature_strokes"] = [
-                    [point.copy() for point in stroke]
-                    for stroke in self.signature_strokes
-                ]
-                box["signature_paths"] = list(self.signature_paths)
+                box["signature_svg"] = svg_string
+                box["signature_data_url"] = data_url
                 break
         self.signature_boxes = list(self.signature_boxes)
         self.is_signing = False
         self.selected_box_id = ""
-        self.signature_is_drawing = False
-        self.signature_paths = []
-        self.signature_last_x = 0.0
-        self.signature_last_y = 0.0
-        return self._emit_interaction_log(
-            f"signature:apply strokes={len(self.signature_strokes)}"
-        )
+        return self._emit_interaction_log("signature:apply (svg)")
 
     @rx.event
     def clear_signature_pad(self):
-        """Clear the current signature strokes."""
-        self.signature_strokes = []
-        self.signature_paths = []
-        self.signature_is_drawing = False
-        self.signature_last_x = 0.0
-        self.signature_last_y = 0.0
-        return self._emit_interaction_log("signature:clear")
-
-    @rx.event
-    def start_signature(self, mouse: dict):
-        """Start capturing a signature stroke."""
-        if not self.is_signing:
-            return
-        self.signature_is_drawing = True
-        self._append_signature_point(mouse)
-        return self._emit_interaction_log(
-            "signature:start "
-            f"x={mouse.get('x', 0)} y={mouse.get('y', 0)} "
-            f"pad=({self.signature_pad_width}x{self.signature_pad_height})"
-        )
-
-    @rx.event
-    def stop_signature(self, mouse: dict):
-        """Stop capturing a signature stroke."""
-        if not self.is_signing:
-            return
-        self._append_signature_point(mouse)
-        self.signature_is_drawing = False
-        return self._emit_interaction_log(
-            "signature:stop "
-            f"x={mouse.get('x', 0)} y={mouse.get('y', 0)} "
-            f"strokes={len(self.signature_strokes)}"
-        )
-
-    @rx.event
-    def sample_signature_point(self, x: int, y: int, defined: bool):
-        """Sample a point while drawing in the signature pad."""
-        if not (self.is_signing and self.signature_is_drawing and defined):
-            return
-        logging.info(f"sample_signature_point raw: x={x} y={y} pad=({self.signature_pad_width}x{self.signature_pad_height})")
-        self._append_signature_point({"x": x, "y": y})
-
-    def _append_signature_point(self, mouse: dict[str, int]):
-        if not mouse:
-            return
-        if self.signature_pad_width <= 0 or self.signature_pad_height <= 0:
-            return
-        # Use raw pixel coordinates directly (matching SVG viewBox)
-        x_val = float(mouse.get("x", 0))
-        y_val = float(mouse.get("y", 0))
-        x_val = max(0.0, min(float(self.signature_pad_width), x_val))
-        y_val = max(0.0, min(float(self.signature_pad_height), y_val))
-        if self.signature_strokes and self.signature_strokes[-1]:
-            dx = x_val - self.signature_last_x
-            dy = y_val - self.signature_last_y
-            if (dx * dx + dy * dy) < 4.0:
-                return
-        if not self.signature_strokes or not self.signature_is_drawing:
-            self.signature_strokes.append([])
-            self.signature_paths.append("")
-        if len(self.signature_paths) < len(self.signature_strokes):
-            self.signature_paths.append("")
-        current_path = self.signature_paths[-1]
-        if not self.signature_strokes[-1]:
-            current_path = f"M {x_val:.2f} {y_val:.2f}"
-        else:
-            current_path = f"{current_path} L {x_val:.2f} {y_val:.2f}"
-        self.signature_strokes[-1].append({"x": x_val, "y": y_val})
-        self.signature_paths[-1] = current_path
-        self.signature_last_x = x_val
-        self.signature_last_y = y_val
-        self.signature_strokes = [list(stroke) for stroke in self.signature_strokes]
-        self.signature_paths = list(self.signature_paths)
-
-    def _build_paths_from_strokes(
-        self, strokes: list[list[dict[str, float]]]
-    ) -> list[str]:
-        paths: list[str] = []
-        for stroke in strokes:
-            if not stroke:
-                paths.append("")
-                continue
-            parts = [f"M {stroke[0]['x']:.2f} {stroke[0]['y']:.2f}"]
-            for point in stroke[1:]:
-                parts.append(f"L {point['x']:.2f} {point['y']:.2f}")
-            paths.append(" ".join(parts))
-        return paths
+        """Clear the signature pad canvas."""
+        yield self._emit_interaction_log("signature:clear")
+        yield rx.call_script("window.clearSignaturePad()")
 
     @rx.event
     def add_box(self, data: str):
@@ -312,8 +210,8 @@ class PDFState(rx.State):
                 "w": box_data["w"],
                 "h": box_data["h"],
                 "page": self.current_page,
-                "signature_strokes": [],
-                "signature_paths": [],
+                "signature_svg": "",
+                "signature_data_url": "",
             }
             self.signature_boxes.append(new_box)
             self.is_drawing_box = False
@@ -406,8 +304,6 @@ class PDFState(rx.State):
             self.has_pdf = True
             self.current_page = 1
             self.signature_boxes = []
-            self.signature_strokes = []
-            self.signature_paths = []
             self.is_rendering = True
             self.render_error = ""
             yield
@@ -461,6 +357,61 @@ class PDFState(rx.State):
         """Update total pages from JS side."""
         self.num_pages = count
 
+    def _parse_signature_svg(self, svg_string: str) -> dict:
+        """Parse signature_pad SVG into Bézier segments and dots for PDF export."""
+        paths: list[dict] = []
+        circles: list[dict] = []
+        # Extract viewBox to know the coordinate system
+        vb_m = re.search(r'viewBox="([^"]*)"', svg_string)
+        vb_w = float(self.signature_pad_width)
+        vb_h = float(self.signature_pad_height)
+        if vb_m:
+            parts = vb_m.group(1).split()
+            if len(parts) == 4:
+                try:
+                    vb_w = float(parts[2])
+                    vb_h = float(parts[3])
+                except ValueError:
+                    pass
+        # Extract <path d="M sx,sy C c1x,c1y c2x,c2y ex,ey" stroke-width="W" ...>
+        for m in re.finditer(r"<path\s([^>]*?)/?>", svg_string):
+            attrs = m.group(1)
+            d_m = re.search(r'd="([^"]*)"', attrs)
+            w_m = re.search(r'stroke-width="([^"]*)"', attrs)
+            if not (d_m and w_m):
+                continue
+            tokens = d_m.group(1).strip().split()
+            width = float(w_m.group(1))
+            if len(tokens) >= 6 and tokens[0] == "M" and tokens[2] == "C":
+                try:
+                    start = [float(v) for v in tokens[1].split(",")]
+                    c1 = [float(v) for v in tokens[3].split(",")]
+                    c2 = [float(v) for v in tokens[4].split(",")]
+                    end = [float(v) for v in tokens[5].split(",")]
+                    paths.append(
+                        {"start": start, "c1": c1, "c2": c2, "end": end, "width": width}
+                    )
+                except (ValueError, IndexError):
+                    continue
+        # Extract <circle r="R" cx="X" cy="Y" ...>
+        for m in re.finditer(r"<circle\s([^>]*?)/?>", svg_string):
+            attrs = m.group(1)
+            r_m = re.search(r'\br="([^"]*)"', attrs)
+            cx_m = re.search(r'cx="([^"]*)"', attrs)
+            cy_m = re.search(r'cy="([^"]*)"', attrs)
+            if r_m and cx_m and cy_m:
+                try:
+                    circles.append(
+                        {
+                            "cx": float(cx_m.group(1)),
+                            "cy": float(cy_m.group(1)),
+                            "r": float(r_m.group(1)),
+                        }
+                    )
+                except ValueError:
+                    continue
+        return {"paths": paths, "circles": circles, "viewBox_w": vb_w, "viewBox_h": vb_h}
+
     @rx.event
     def export_signed_pdf(self):
         """Export a signed PDF with signature overlays applied."""
@@ -475,38 +426,66 @@ class PDFState(rx.State):
 
         try:
             doc = fitz.open(pdf_path)
+            pad_w = float(self.signature_pad_width) or 1.0
+            pad_h = float(self.signature_pad_height) or 1.0
+
             for box in self.signature_boxes:
-                strokes = box.get("signature_strokes", [])
-                if not strokes:
+                svg_string = box.get("signature_svg", "")
+                if not svg_string:
                     continue
                 page_index = int(box.get("page", 1)) - 1
                 if page_index < 0 or page_index >= doc.page_count:
                     continue
                 page = doc.load_page(page_index)
                 page_rect = page.rect
-                x = page_rect.width * (float(box["x"]) / 100.0)
-                y = page_rect.height * (float(box["y"]) / 100.0)
-                w = page_rect.width * (float(box["w"]) / 100.0)
-                h = page_rect.height * (float(box["h"]) / 100.0)
-                rect = fitz.Rect(x, y, x + w, y + h)
-                for stroke in strokes:
-                    if len(stroke) < 2:
-                        continue
-                    pad_w = float(self.signature_pad_width) or 1.0
-                    pad_h = float(self.signature_pad_height) or 1.0
-                    for idx in range(1, len(stroke)):
-                        p0 = stroke[idx - 1]
-                        p1 = stroke[idx]
-                        x0 = rect.x0 + rect.width * (float(p0["x"]) / pad_w)
-                        y0 = rect.y0 + rect.height * (float(p0["y"]) / pad_h)
-                        x1 = rect.x0 + rect.width * (float(p1["x"]) / pad_w)
-                        y1 = rect.y0 + rect.height * (float(p1["y"]) / pad_h)
-                        page.draw_line(
-                            fitz.Point(x0, y0),
-                            fitz.Point(x1, y1),
-                            color=(0, 0, 0),
-                            width=2,
-                        )
+                bx = page_rect.width * (float(box["x"]) / 100.0)
+                by = page_rect.height * (float(box["y"]) / 100.0)
+                bw = page_rect.width * (float(box["w"]) / 100.0)
+                bh = page_rect.height * (float(box["h"]) / 100.0)
+                rect = fitz.Rect(bx, by, bx + bw, by + bh)
+
+                parsed = self._parse_signature_svg(svg_string)
+                svg_w = parsed["viewBox_w"] or pad_w
+                svg_h = parsed["viewBox_h"] or pad_h
+                scale_x = rect.width / svg_w
+                scale_y = rect.height / svg_h
+                scale_w = min(scale_x, scale_y)  # keep stroke width proportional
+
+                ink_color = (0.067, 0.094, 0.153)  # #111827
+
+                shape = page.new_shape()
+                for pd in parsed["paths"]:
+                    p1 = fitz.Point(
+                        rect.x0 + pd["start"][0] * scale_x,
+                        rect.y0 + pd["start"][1] * scale_y,
+                    )
+                    p2 = fitz.Point(
+                        rect.x0 + pd["c1"][0] * scale_x,
+                        rect.y0 + pd["c1"][1] * scale_y,
+                    )
+                    p3 = fitz.Point(
+                        rect.x0 + pd["c2"][0] * scale_x,
+                        rect.y0 + pd["c2"][1] * scale_y,
+                    )
+                    p4 = fitz.Point(
+                        rect.x0 + pd["end"][0] * scale_x,
+                        rect.y0 + pd["end"][1] * scale_y,
+                    )
+                    shape.draw_bezier(p1, p2, p3, p4)
+                    shape.finish(
+                        color=ink_color,
+                        width=pd["width"] * scale_w,
+                        closePath=False,
+                        lineCap=1,   # round
+                        lineJoin=1,  # round
+                    )
+                for cd in parsed["circles"]:
+                    cx = rect.x0 + cd["cx"] * scale_x
+                    cy = rect.y0 + cd["cy"] * scale_y
+                    r = cd["r"] * scale_w
+                    shape.draw_circle(fitz.Point(cx, cy), max(r, 0.5))
+                    shape.finish(fill=ink_color, closePath=True)
+                shape.commit()
 
             signed_name = f"{self.file_token}_signed.pdf"
             signed_path = upload_dir / signed_name

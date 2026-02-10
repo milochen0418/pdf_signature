@@ -17,3 +17,6 @@ uploaded_files/
 
 # Ignore macOS system files
 .DS_Store
+
+# Playwright / Test Artifacts
+testcases/**/output/
