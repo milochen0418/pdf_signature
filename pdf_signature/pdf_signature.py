@@ -41,7 +41,6 @@ def index() -> rx.Component:
             ),
             class_name="flex min-h-screen bg-white",
         ),
-        rx.script(sig_pad_init_js),
         class_name="font-['Inter'] selection:bg-blue-100",
     )
 
@@ -49,6 +48,8 @@ def index() -> rx.Component:
 app = rx.App(
     theme=rx.theme(appearance="light"),
     head_components=[
+        rx.el.script(src="/signature_pad.umd.min.js"),
+        rx.el.script(sig_pad_init_js),
         rx.el.link(rel="preconnect", href="https://fonts.googleapis.com"),
         rx.el.link(rel="preconnect", href="https://fonts.gstatic.com", cross_origin=""),
         rx.el.link(
