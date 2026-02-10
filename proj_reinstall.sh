@@ -43,8 +43,19 @@ remove_poetry_envs() {
     # Trim the status suffix like "(Activated)" if present.
     local env_path
     env_path="${line%% *}"
-    log "Removing env at $env_path"
-    (cd "$ROOT_DIR" && poetry env remove "$env_path")
+    local env_name
+    env_name="${env_path##*/}"
+    # Skip envs we cannot write to (avoids breaking on permission errors).
+    if [[ ! -w "$env_path" ]]; then
+      log "Skipping env at $env_path (not writable)"
+      continue
+    fi
+
+    log "Removing env $env_name"
+    if ! (cd "$ROOT_DIR" && poetry env remove "$env_name"); then
+      log "Failed to remove $env_name, continuing"
+      continue
+    fi
   done <<< "$envs"
 }
 
