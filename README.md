@@ -18,13 +18,7 @@ This project is managed with [Poetry](https://python-poetry.org/).
 
 - Python 3.11.x
 - Poetry
-- FFmpeg
 
-Install FFmpeg (macOS):
-
-```bash
-brew install ffmpeg
-```
 
 ### Installation
 
