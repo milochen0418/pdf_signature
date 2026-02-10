@@ -94,7 +94,16 @@ recreate_poetry_env() {
   log "Creating Poetry environment with python3.11"
   (cd "$ROOT_DIR" && poetry env use python3.11)
   log "Installing dependencies"
-  (cd "$ROOT_DIR" && poetry install)
+  if ! (cd "$ROOT_DIR" && poetry install); then
+    log "poetry install failed; attempting to regenerate lockfile"
+    if (cd "$ROOT_DIR" && poetry lock); then
+      log "Lockfile regenerated; retrying install"
+      (cd "$ROOT_DIR" && poetry install)
+    else
+      log "poetry lock failed; aborting"
+      exit 1
+    fi
+  fi
 }
 
 parse_args() {
