@@ -6,17 +6,40 @@ from pdf_signature.components.signature_modal import signature_modal, sig_pad_in
 
 sig_pad_loader_js = """
 (function() {
+    // Reflex copies files in /assets to the public root (e.g. /signature_pad.umd.min.js)
+    // so try both root and /assets prefixes before falling back to CDNs.
     const sources = [
+        '/signature_pad.umd.min.js',
+        '/assets/signature_pad.umd.min.js',
         'https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js',
-        'https://unpkg.com/signature_pad@4.1.7/dist/signature_pad.umd.min.js',
-        '/assets/signature_pad.umd.min.js'
+        'https://unpkg.com/signature_pad@4.1.7/dist/signature_pad.umd.min.js'
     ];
 
     let loaded = false;
     let attempt = 0;
+    let timeoutId = null;
+    const fallbackDelay = 2500; // bail out if a CDN request hangs
+
+    function markLoaded(src) {
+        loaded = true;
+        clearTimeout(timeoutId);
+        window.__signaturePadLoaded = true;
+        window.dispatchEvent(new Event('signaturepad:loaded'));
+        console.info('[SignaturePad] loaded from', src);
+    }
+
+    function scheduleFallback() {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+            if (loaded) return;
+            console.warn('[SignaturePad] timed out; trying next source');
+            loadNext();
+        }, fallbackDelay);
+    }
 
     function loadNext() {
         if (loaded || attempt >= sources.length) return;
+        clearTimeout(timeoutId);
         const src = sources[attempt++];
 
         const script = document.createElement('script');
@@ -24,18 +47,29 @@ sig_pad_loader_js = """
         script.async = true;
 
         script.onload = () => {
-            loaded = true;
-            window.__signaturePadLoaded = true;
-            window.dispatchEvent(new Event('signaturepad:loaded'));
-            console.info('[SignaturePad] loaded from', src);
+            // Some servers can respond with HTML (404) that still triggers onload.
+            if (typeof window.SignaturePad === 'undefined') {
+                console.warn('[SignaturePad] script loaded but global missing; trying next source', src);
+                loadNext();
+                return;
+            }
+            markLoaded(src);
         };
 
         script.onerror = () => {
+            clearTimeout(timeoutId);
             console.warn('[SignaturePad] failed to load from', src);
             loadNext();
         };
 
         document.head.appendChild(script);
+        scheduleFallback();
+    }
+
+    // If already present (hot reload), skip loading.
+    if (typeof window.SignaturePad !== 'undefined') {
+        markLoaded('preloaded');
+        return;
     }
 
     loadNext();
