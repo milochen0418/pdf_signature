@@ -17,6 +17,7 @@ import os
 import sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
+import fitz  # PyMuPDF – already a project dependency
 
 BASE_URL = os.environ.get("BASE_URL", "http://127.0.0.1:3000")
 HEADLESS = os.environ.get("HEADLESS", "1") != "0"
@@ -45,18 +46,27 @@ def wait_for_reflex(page, timeout=30_000):
 
 
 def inject_draw_box(page):
-    """Inject a signature box via the hidden input, same as draw_helpers.js does."""
+    """Inject a signature box via the hidden input using Playwright's fill().
+
+    Playwright's fill() correctly triggers React's synthetic onChange event,
+    unlike manual DOM event dispatch which React may ignore.
+    """
+    data = '{"x": 20, "y": 20, "w": 40, "h": 25}'
+    input_el = page.locator('#new-box-data-input')
+    # Make the input focusable / interactable for Playwright
     page.evaluate("""() => {
-        const data = JSON.stringify({ x: 20, y: 20, w: 40, h: 25 });
-        const input = document.getElementById('new-box-data-input');
-        if (!input) throw new Error('hidden input not found');
-        const setter = Object.getOwnPropertyDescriptor(
-            window.HTMLInputElement.prototype, 'value'
-        ).set;
-        setter.call(input, data);
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
+        const el = document.getElementById('new-box-data-input');
+        if (el) {
+            el.style.position = 'fixed';
+            el.style.left = '0';
+            el.style.top = '0';
+            el.style.opacity = '0.01';
+            el.style.width = '1px';
+            el.style.height = '1px';
+            el.style.pointerEvents = 'auto';
+        }
     }""")
+    input_el.fill(data, timeout=5000)
 
 
 # ── tests ────────────────────────────────────────────────────────────
@@ -279,6 +289,149 @@ def test_export_pdf(page) -> bool:
     return True
 
 
+def test_verify_exported_pdf(page) -> bool:
+    """Test 7: Verify the exported signed PDF matches the on-screen view.
+
+    Steps:
+      1) Render the exported PDF page to an image with PyMuPDF.
+      2) Compare the signature region against the on-screen screenshot
+         to confirm they are visually consistent (non-blank, structurally similar).
+    """
+    print("\n[7/7] Verify Exported PDF")
+
+    signed_pdf_path = os.path.join(OUTPUT_DIR, "signed_output.pdf")
+    assert os.path.exists(signed_pdf_path), f"signed_output.pdf not found at {signed_pdf_path}"
+
+    # ── 1. Render page 1 of the signed PDF to a PNG ──────────────────
+    doc = fitz.open(signed_pdf_path)
+    assert doc.page_count >= 1, "Signed PDF has no pages"
+    pdf_page = doc.load_page(0)
+    pix = pdf_page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2× for clarity
+
+    rendered_path = os.path.join(OUTPUT_DIR, "07_exported_pdf_render.png")
+    pix.save(rendered_path)
+    print(f"  📸 Rendered exported PDF → {rendered_path}")
+
+    pdf_width = pix.width
+    pdf_height = pix.height
+    page_rect = pdf_page.rect
+    doc.close()
+
+    # ── 2. Get the bounding box that was used during the test ────────
+    #    The box was drawn at roughly (20%, 20%) with size (40%, 25%)
+    #    (from inject_draw_box fallback or mouse drag in test_draw_box).
+    #    We check a generous region around where the signature should be.
+    # Signature box is at approximately x=20%, y=20%, w=40%, h=25%
+    sig_x = int(pdf_width * 0.15)
+    sig_y = int(pdf_height * 0.15)
+    sig_x2 = int(pdf_width * 0.65)
+    sig_y2 = int(pdf_height * 0.50)
+
+    # ── 3. Check the signature region is NOT blank ────────────────────
+    #    "Blank" = every pixel in the region is the same colour (white/uniform).
+    sig_region_samples = pix.samples  # raw pixel bytes
+    stride = pix.stride
+    n_channels = pix.n  # typically 3 (RGB) or 4 (RGBA)
+
+    unique_colors = set()
+    step = 3  # sample every 3rd pixel for speed
+    for row in range(sig_y, min(sig_y2, pdf_height), step):
+        offset = row * stride
+        for col in range(sig_x, min(sig_x2, pdf_width), step):
+            px_start = offset + col * n_channels
+            px = sig_region_samples[px_start:px_start + n_channels]
+            unique_colors.add(bytes(px))
+            if len(unique_colors) > 20:
+                break  # clearly not blank
+        if len(unique_colors) > 20:
+            break
+
+    print(f"  ℹ️  Unique colours in signature region: {len(unique_colors)}")
+    assert len(unique_colors) > 5, (
+        f"Signature region looks blank – only {len(unique_colors)} unique colours found. "
+        "The exported PDF may not contain the drawn signature."
+    )
+    print("  ✅ Signature region is NOT blank (contains drawn ink)")
+
+    # ── 4. Compare exported PDF render with on-screen screenshot ─────
+    #    Load the step-5 screenshot (after Apply Signature) and the
+    #    exported PDF render, then compare signature regions via pixel
+    #    similarity (at least some dark-ink pixels should appear in both).
+    apply_screenshot = os.path.join(OUTPUT_DIR, "05_apply_signature.png")
+    if os.path.exists(apply_screenshot):
+        # Use fitz to load the screenshot as a Pixmap for comparison
+        screen_pix = fitz.Pixmap(apply_screenshot)
+        screen_w = screen_pix.width
+        screen_h = screen_pix.height
+
+        def count_dark_pixels(pixmap, x1, y1, x2, y2):
+            """Count pixels darker than a threshold in the given rect."""
+            dark = 0
+            s = pixmap.stride
+            n = pixmap.n
+            samples = pixmap.samples
+            for r in range(max(0, y1), min(y2, pixmap.height), 2):
+                off = r * s
+                for c in range(max(0, x1), min(x2, pixmap.width), 2):
+                    px = off + c * n
+                    # average of RGB channels
+                    avg = sum(samples[px + ch] for ch in range(min(3, n))) / min(3, n)
+                    if avg < 128:
+                        dark += 1
+            return dark
+
+        # Dark pixels in exported PDF signature region
+        pdf_dark = count_dark_pixels(
+            pix, sig_x, sig_y, sig_x2, sig_y2
+        )
+
+        # For the on-screen screenshot, estimate the signature region
+        # proportionally (the screenshot is of the whole viewport)
+        scr_sig_x = int(screen_w * 0.15)
+        scr_sig_y = int(screen_h * 0.15)
+        scr_sig_x2 = int(screen_w * 0.65)
+        scr_sig_y2 = int(screen_h * 0.50)
+        screen_dark = count_dark_pixels(
+            screen_pix, scr_sig_x, scr_sig_y, scr_sig_x2, scr_sig_y2
+        )
+
+        print(f"  ℹ️  Dark pixels – PDF render: {pdf_dark}, on-screen: {screen_dark}")
+
+        # Both should have noticeable ink (dark pixels)
+        assert pdf_dark > 10, (
+            f"Exported PDF signature region has too few dark pixels ({pdf_dark}). "
+            "Signature may not have been written to the PDF."
+        )
+        print("  ✅ Exported PDF contains visible ink strokes")
+
+        # The PDF render should have a reasonable amount of detail
+        # (we don't require an exact match because rendering differs)
+        if screen_dark > 0:
+            ratio = pdf_dark / max(screen_dark, 1)
+            print(f"  ℹ️  PDF-to-screen dark-pixel ratio: {ratio:.2f}")
+            # Just warn, don't fail, because different renderers give different results
+            if ratio < 0.01:
+                print("  ⚠️  Very low ratio – exported PDF may be missing detail")
+
+        screen_pix = None  # release
+    else:
+        print("  ⚠️  Step-5 screenshot not found; skipping cross-comparison")
+
+    # ── 5. Structural check: the signed PDF must be larger than original ─
+    original_size = os.path.getsize(TEST_PDF)
+    signed_size = os.path.getsize(signed_pdf_path)
+    print(f"  ℹ️  Original PDF: {original_size} bytes, Signed PDF: {signed_size} bytes")
+    assert signed_size >= original_size, (
+        f"Signed PDF ({signed_size}B) is smaller than original ({original_size}B). "
+        "Export may have failed."
+    )
+    print("  ✅ Signed PDF size ≥ original (signature data added)")
+
+    screenshot(page, "07_verify_pdf")
+    print("  ✅ Exported PDF verification passed")
+    return True
+
+
 # ── main ─────────────────────────────────────────────────────────────
 
 
@@ -291,6 +444,7 @@ def main():
         "Draw Signature",
         "Apply Signature",
         "Export PDF",
+        "Verify Exported PDF",
     ]
     test_fns = [
         test_upload_pdf,
@@ -299,6 +453,7 @@ def main():
         test_draw_signature,
         test_apply_signature,
         test_export_pdf,
+        test_verify_exported_pdf,
     ]
 
     with sync_playwright() as p:

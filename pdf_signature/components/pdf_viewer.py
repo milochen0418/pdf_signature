@@ -111,14 +111,11 @@ def pdf_viewer_canvas() -> rx.Component:
                 rx.foreach(PDFState.signature_boxes, render_signature_box),
                 class_name="absolute inset-0 z-10",
             ),
-            rx.el.div(
-                rx.input(
-                    # type="text", # rx.input might not support type="text" directly or implies it
-                    id="new-box-data-input",
-                    on_change=PDFState.add_box,
-                    class_name="hidden",
-                ),
-                class_name="hidden",
+            rx.el.input(
+                type="text",
+                id="new-box-data-input",
+                on_change=PDFState.add_box,
+                style={"position": "absolute", "left": "-9999px", "opacity": "0", "pointer_events": "none"},
             ),
             rx.cond(
                 PDFState.is_drawing_box,
