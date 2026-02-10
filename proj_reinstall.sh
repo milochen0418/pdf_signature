@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SHOW_HELP=false
+REMOVE_ONLY=false
+
 # Recreate the Poetry env and clear Reflex build artifacts.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() {
   echo "[proj_reinstall] $*"
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ./proj_reinstall.sh [options]
+
+Options:
+  --help, -h       Show this help and exit.
+  --remove-only     Remove existing Poetry envs and clean artifacts; skip creating a new env and installing deps.
+EOF
 }
 
 require_python() {
@@ -84,11 +97,41 @@ recreate_poetry_env() {
   (cd "$ROOT_DIR" && poetry install)
 }
 
+parse_args() {
+  while (($#)); do
+    case "$1" in
+      --help|-h)
+        SHOW_HELP=true
+        ;;
+      --remove-only)
+        REMOVE_ONLY=true
+        ;;
+      *)
+        log "Unknown argument: $1"
+        usage
+        exit 1
+        ;;
+    esac
+    shift
+  done
+}
+
 main() {
+  parse_args "$@"
+
+  if $SHOW_HELP; then
+    usage
+    exit 0
+  fi
+
   require_python
   clean_reflex_artifacts
   clean_uploads
   remove_poetry_envs
+  if $REMOVE_ONLY; then
+    log "Remove-only mode: skipping env creation and dependency install"
+    exit 0
+  fi
   recreate_poetry_env
   log "Done"
 }
