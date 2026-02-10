@@ -6,6 +6,7 @@ console.info('[SigPad] boot');
 
 var signaturePad = null;
 var sigPadInitAttempts = 0;
+var sigPadSizeAttempts = 0;
 var sigPadWatchdogStarted = false;
 var sigPadWatchdogTimer = null;
 var sigPadWatchdogDeadline = 0;
@@ -28,7 +29,15 @@ function initSigPad(force) {
 
     if (signaturePad && !force) return;
 
-    resizeCanvasForHiDpi(canvas);
+    if (!resizeCanvasForHiDpi(canvas)) {
+        if (sigPadSizeAttempts < 20) {
+            sigPadSizeAttempts += 1;
+            setTimeout(() => initSigPad(force), 100);
+        } else {
+            console.warn('[SignaturePad] canvas not ready (zero size) after retries.');
+        }
+        return;
+    }
 
     if (typeof SignaturePad === 'undefined') {
         if (sigPadInitAttempts < 20) {
