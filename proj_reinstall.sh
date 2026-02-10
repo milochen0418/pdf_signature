@@ -38,6 +38,10 @@ remove_poetry_envs() {
     return
   fi
 
+  # Track removal outcomes for a final summary.
+  local removed_envs=()
+  local failed_envs=()
+
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     # Trim the status suffix like "(Activated)" if present.
@@ -54,9 +58,23 @@ remove_poetry_envs() {
     log "Removing env $env_name"
     if ! (cd "$ROOT_DIR" && poetry env remove "$env_name"); then
       log "Failed to remove $env_name, continuing"
+      failed_envs+=("$env_path")
       continue
     fi
+    removed_envs+=("$env_path")
   done <<< "$envs"
+
+  if (( ${#removed_envs[@]} )); then
+    log "Removed envs: ${removed_envs[*]}"
+  else
+    log "No envs removed"
+  fi
+
+  if (( ${#failed_envs[@]} )); then
+    log "Failed to remove envs: ${failed_envs[*]}"
+  else
+    log "No removal failures"
+  fi
 }
 
 recreate_poetry_env() {
