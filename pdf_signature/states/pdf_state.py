@@ -48,6 +48,103 @@ class PDFState(rx.State):
     signature_pad_width: int = 520
     signature_pad_height: int = 220
 
+    # Draw Box State
+    is_drawing_box: bool = False
+    drawing_start_x: float = 0
+    drawing_start_y: float = 0
+    drawing_current_x: float = 0
+    drawing_current_y: float = 0
+
+    def toggle_drawing_mode(self):
+        """Toggle the signature box drawing mode."""
+        self.is_drawing_box = not self.is_drawing_box
+        if not self.is_drawing_box:
+            # clear state if cancelled
+            self.drawing_start_x = 0
+            self.drawing_start_y = 0
+            self.drawing_current_x = 0
+            self.drawing_current_y = 0
+
+    def start_drawing_box(self, client_x: float, client_y: float):
+        """Start drawing a box."""
+        self.drawing_start_x = client_x
+        self.drawing_start_y = client_y
+        self.drawing_current_x = client_x
+        self.drawing_current_y = client_y
+
+    def update_drawing_box(self, client_x: float, client_y: float):
+        """Update drawing box coordinates."""
+        if self.is_drawing_box:
+            self.drawing_current_x = client_x
+            self.drawing_current_y = client_y
+
+    def end_drawing_box(self):
+        """End drawing and request container rect for saving."""
+        if not self.is_drawing_box:
+            return
+        
+        # Only process if we actually dragged somewhere
+        if abs(self.drawing_current_x - self.drawing_start_x) < 5 or abs(self.drawing_current_y - self.drawing_start_y) < 5:
+            # Treat as click or tiny drag - ignore or maybe exit mode?
+            # self.is_drawing_box = False # Keep mode on for multiple boxes? User preference.
+            return
+
+        # Execute JS to get the container's bounding rect
+        yield rx.call_script(
+            "document.getElementById('pdf-image-container').getBoundingClientRect()",
+            callback=PDFState.save_box_with_rect
+        )
+
+    def save_box_with_rect(self, rect: dict):
+        """Calculate relative coordinates and save the box."""
+        if not rect:
+            return
+
+        # Container Rect
+        c_left = rect["left"]
+        c_top = rect["top"]
+        c_width = rect["width"]
+        c_height = rect["height"]
+
+        # Box Screen Coords
+        # Use min/max to handle drawing in any direction
+        b_left = min(self.drawing_start_x, self.drawing_current_x)
+        b_top = min(self.drawing_start_y, self.drawing_current_y)
+        b_width = abs(self.drawing_current_x - self.drawing_start_x)
+        b_height = abs(self.drawing_current_y - self.drawing_start_y)
+
+        # Convert to Relative %
+        # Relative X = (BoxScreenLeft - ContainerScreenLeft) / ContainerWidth
+        rel_x = (b_left - c_left) / c_width * 100
+        rel_y = (b_top - c_top) / c_height * 100
+        rel_w = b_width / c_width * 100
+        rel_h = b_height / c_height * 100
+
+        # Save
+        new_id = "".join(random.choices(string.ascii_letters + string.digits, k=6))
+        new_box = {
+            "id": new_id,
+            "x": rel_x,
+            "y": rel_y,
+            "w": rel_w,
+            "h": rel_h,
+            "page": self.current_page,
+            "signature_strokes": [],
+            "signature_paths": [],
+        }
+        self.signature_boxes.append(new_box)
+        
+        # Reset current drawing state but stay in draw mode? 
+        # Usually easier to exit draw mode to avoid accidental clicks
+        self.is_drawing_box = False
+        self.drawing_start_x = 0
+        self.drawing_start_y = 0
+        self.drawing_current_x = 0
+        self.drawing_current_y = 0
+
+    def delete_box(self, box_id: str):
+        """Delete a signature box."""
+        self.signature_boxes = [box for box in self.signature_boxes if box["id"] != box_id]
     def _emit_interaction_log(self, message: str):
         logging.getLogger("interaction").info(message)
         return rx.call_script(f"console.log({json.dumps(message)})")
@@ -204,6 +301,7 @@ class PDFState(rx.State):
     @rx.event
     def add_box(self, data: str):
         """Add a new signature box from JSON data."""
+        logging.info(f"add_box called with data: {data}")
         try:
             box_data = json.loads(data)
             new_box = {
@@ -219,6 +317,8 @@ class PDFState(rx.State):
                 "signature_paths": [],
             }
             self.signature_boxes.append(new_box)
+            self.is_drawing_box = False
+            logging.info(f"Successfully added box: {new_box['id']}")
         except Exception as e:
             logging.exception(f"Error adding box: {e}")
 

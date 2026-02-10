@@ -126,8 +126,28 @@ def pdf_viewer_canvas() -> rx.Component:
                 rx.foreach(PDFState.signature_boxes, render_signature_box),
                 class_name="absolute inset-0 z-10",
             ),
-            class_name="relative inline-block m-auto",
-            id="pdf-wrapper",
+            rx.script(src="/draw_helpers.js"),
+            rx.el.div(
+                rx.input(
+                    # type="text", # rx.input might not support type="text" directly or implies it
+                    id="new-box-data-input",
+                    on_change=PDFState.add_box,
+                    class_name="hidden",
+                ),
+                class_name="hidden",
+            ),
+            rx.cond(
+                PDFState.is_drawing_box,
+                rx.el.div(
+                    class_name="absolute inset-0 z-50 cursor-crosshair",
+                ),
+            ),
+            class_name=rx.cond(
+                PDFState.is_drawing_box,
+                "relative inline-block m-auto cursor-crosshair",
+                "relative inline-block m-auto",
+            ),
+            id="pdf-image-container",
         ),
         class_name="flex w-full overflow-auto bg-gray-100/50 p-8 custom-scrollbar justify-center items-start",
         id="canvas-container",
@@ -184,6 +204,16 @@ def pdf_controls() -> rx.Component:
             class_name="flex items-center gap-4 pl-4 border-r pr-4",
         ),
         rx.el.div(
+            rx.el.button(
+                rx.icon("box-select", class_name="h-4 w-4"),
+                rx.cond(PDFState.is_drawing_box, "Cancel Draw", "Draw Box"),
+                on_click=PDFState.toggle_drawing_mode,
+                class_name=rx.cond(
+                    PDFState.is_drawing_box,
+                    "flex items-center gap-2 px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg font-medium text-sm transition-colors border border-blue-200",
+                    "flex items-center gap-2 px-3 py-1.5 hover:bg-gray-100 text-gray-700 rounded-lg font-medium text-sm transition-colors",
+                ),
+            ),
             rx.cond(
                 PDFState.signature_boxes.length() > 0,
                 rx.el.button(
