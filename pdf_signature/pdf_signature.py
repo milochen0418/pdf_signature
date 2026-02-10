@@ -60,7 +60,9 @@ const getSurfaceMetrics = (surface) => {
 
 document.addEventListener('mousedown', (e) => {
     const surface = document.getElementById('draw-surface');
-    if (!surface || e.target !== surface) return;
+    if (!surface || !surface.contains(e.target)) return;
+    surface.style.pointerEvents = 'auto';
+    surface.style.touchAction = 'none';
 
     isDrawing = true;
     const { rect } = getSurfaceMetrics(surface);
