@@ -30,7 +30,6 @@ class PDFState(rx.State):
     num_pages: int = 1
     zoom_level: float = 1.0
     scale_percent: int = 100
-    is_draw_mode: bool = False
     signature_boxes: list[SignatureBox] = []
     selected_box_id: str = ""
     is_signing: bool = False
@@ -41,9 +40,6 @@ class PDFState(rx.State):
     page_image_height: int = 0
     signed_filename: str = ""
     file_token: str = ""
-    is_box_selecting: bool = False
-    box_start_x: int = 0
-    box_start_y: int = 0
     signature_is_drawing: bool = False
     signature_strokes: list[list[dict[str, float]]] = []
     signature_paths: list[str] = []
@@ -57,34 +53,31 @@ class PDFState(rx.State):
         return rx.call_script(f"console.log({json.dumps(message)})")
 
     @rx.event
-    def toggle_draw_mode(self):
-        """Toggle the rectangle drawing mode."""
-        self.is_draw_mode = not self.is_draw_mode
-        if self.is_draw_mode:
-            self.is_signing = False
-
-    @rx.event
     def open_signing_modal(self, box_id: str):
         """Open the signature pad for a specific box."""
-        if not self.is_draw_mode:
-            self.selected_box_id = box_id
-            self.is_signing = True
-            self.signature_is_drawing = False
-            self.signature_strokes = []
-            self.signature_paths = []
-            for box in self.signature_boxes:
-                if box["id"] == box_id:
-                    strokes = box.get("signature_strokes", [])
-                    self.signature_strokes = [
-                        [point.copy() for point in stroke] for stroke in strokes
-                    ]
-                    box_paths = box.get("signature_paths")
-                    if box_paths is None or len(box_paths) != len(self.signature_strokes):
-                        box_paths = self._build_paths_from_strokes(
-                            self.signature_strokes
-                        )
-                    self.signature_paths = list(box_paths)
-                    break
+        self.selected_box_id = box_id
+        self.is_signing = True
+        self.signature_is_drawing = False
+        self.signature_strokes = []
+        self.signature_paths = []
+        log = self._emit_interaction_log(
+            "signature:open "
+            f"box_id={box_id} page={self.current_page} zoom={self.zoom_level:.2f}"
+        )
+        for box in self.signature_boxes:
+            if box["id"] == box_id:
+                strokes = box.get("signature_strokes", [])
+                self.signature_strokes = [
+                    [point.copy() for point in stroke] for stroke in strokes
+                ]
+                box_paths = box.get("signature_paths")
+                if box_paths is None or len(box_paths) != len(self.signature_strokes):
+                    box_paths = self._build_paths_from_strokes(
+                        self.signature_strokes
+                    )
+                self.signature_paths = list(box_paths)
+                break
+        return log
 
     @rx.event
     def close_signing_modal(self):
@@ -95,6 +88,7 @@ class PDFState(rx.State):
         self.signature_paths = []
         self.signature_last_x = 0.0
         self.signature_last_y = 0.0
+        return self._emit_interaction_log("signature:close")
 
     @rx.event
     def apply_signature(self):
@@ -114,6 +108,9 @@ class PDFState(rx.State):
         self.signature_paths = []
         self.signature_last_x = 0.0
         self.signature_last_y = 0.0
+        return self._emit_interaction_log(
+            f"signature:apply strokes={len(self.signature_strokes)}"
+        )
 
     @rx.event
     def clear_signature_pad(self):
@@ -123,6 +120,7 @@ class PDFState(rx.State):
         self.signature_is_drawing = False
         self.signature_last_x = 0.0
         self.signature_last_y = 0.0
+        return self._emit_interaction_log("signature:clear")
 
     @rx.event
     def start_signature(self, mouse: dict[str, int]):
@@ -132,7 +130,9 @@ class PDFState(rx.State):
         self.signature_is_drawing = True
         self._append_signature_point(mouse)
         return self._emit_interaction_log(
-            f"signature:start x={mouse.get('x', 0)} y={mouse.get('y', 0)}"
+            "signature:start "
+            f"x={mouse.get('x', 0)} y={mouse.get('y', 0)} "
+            f"pad=({self.signature_pad_width}x{self.signature_pad_height})"
         )
 
     @rx.event
@@ -143,7 +143,9 @@ class PDFState(rx.State):
         self._append_signature_point(mouse)
         self.signature_is_drawing = False
         return self._emit_interaction_log(
-            f"signature:stop x={mouse.get('x', 0)} y={mouse.get('y', 0)}"
+            "signature:stop "
+            f"x={mouse.get('x', 0)} y={mouse.get('y', 0)} "
+            f"strokes={len(self.signature_strokes)}"
         )
 
     @rx.event
@@ -220,71 +222,6 @@ class PDFState(rx.State):
         except Exception as e:
             logging.exception(f"Error adding box: {e}")
 
-    @rx.event
-    def start_box_selection(self, mouse: dict[str, int]):
-        """Start dragging to create a signature box."""
-        if not self.is_draw_mode or self.is_signing:
-            return
-        self.is_box_selecting = True
-        self.box_start_x = int(mouse.get("x", 0))
-        self.box_start_y = int(mouse.get("y", 0))
-        return self._emit_interaction_log(
-            f"drawbox:start x={self.box_start_x} y={self.box_start_y}"
-        )
-
-    @rx.event
-    def end_box_selection(self, mouse: dict[str, int]):
-        """Finish dragging and create a signature box."""
-        if not self.is_box_selecting:
-            return
-        self.is_box_selecting = False
-        end_x = int(mouse.get("x", 0))
-        end_y = int(mouse.get("y", 0))
-        width = abs(end_x - self.box_start_x)
-        height = abs(end_y - self.box_start_y)
-        logs = [
-            self._emit_interaction_log(
-                "drawbox:end "
-                f"start=({self.box_start_x},{self.box_start_y}) "
-                f"end=({end_x},{end_y}) size=({width}x{height})"
-            )
-        ]
-        if width < 5 or height < 5:
-            return logs
-        if self.page_image_width <= 0 or self.page_image_height <= 0:
-            return logs
-        scaled_width = self.page_image_width * self.zoom_level
-        scaled_height = self.page_image_height * self.zoom_level
-        if scaled_width <= 0 or scaled_height <= 0:
-            return logs
-        left = min(self.box_start_x, end_x)
-        top = min(self.box_start_y, end_y)
-        pct_x = (left / scaled_width) * 100.0
-        pct_y = (top / scaled_height) * 100.0
-        pct_w = (width / scaled_width) * 100.0
-        pct_h = (height / scaled_height) * 100.0
-        pct_x = max(0.0, min(100.0, pct_x))
-        pct_y = max(0.0, min(100.0, pct_y))
-        pct_w = max(0.0, min(100.0 - pct_x, pct_w))
-        pct_h = max(0.0, min(100.0 - pct_y, pct_h))
-        logs.append(
-            self._emit_interaction_log(
-                "drawbox:percent "
-                f"x={pct_x:.2f} y={pct_y:.2f} w={pct_w:.2f} h={pct_h:.2f}"
-            )
-        )
-        new_box = {
-            "id": "".join(random.choices(string.ascii_letters + string.digits, k=6)),
-            "x": pct_x,
-            "y": pct_y,
-            "w": pct_w,
-            "h": pct_h,
-            "page": self.current_page,
-            "signature_strokes": [],
-            "signature_paths": [],
-        }
-        self.signature_boxes.append(new_box)
-        return logs
 
     @rx.event
     def delete_box(self, box_id: str):
@@ -307,6 +244,7 @@ class PDFState(rx.State):
     def set_render_error(self, message: str):
         """Update render error message from the JS side."""
         self.render_error = message
+
 
     def _render_page_image(self, page_index: int, file_path):
         """Render a specific PDF page to an image in the upload directory."""
@@ -516,3 +454,13 @@ class PDFState(rx.State):
     def page_image_height_px(self) -> str:
         """Get the rendered page height in px."""
         return f"{self.page_image_height}px"
+
+    @rx.var
+    def page_image_scaled_width_px(self) -> str:
+        """Get the scaled page width in px."""
+        return f"{self.page_image_width * self.zoom_level:.2f}px"
+
+    @rx.var
+    def page_image_scaled_height_px(self) -> str:
+        """Get the scaled page height in px."""
+        return f"{self.page_image_height * self.zoom_level:.2f}px"
