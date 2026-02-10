@@ -23,6 +23,9 @@ function initSigPad(force) {
 
     if (signaturePad && !force) return; // Already initialized
 
+    // Reset drawing buffer to match displayed size before instantiating
+    resizeCanvasForHiDpi(canvas);
+
     if (typeof SignaturePad === 'undefined') {
         // Wait for the script loader fallback to finish.
         if (sigPadInitAttempts < 15) {
@@ -34,13 +37,12 @@ function initSigPad(force) {
         return;
     }
 
-    // Ensure canvas has proper pixel ratio; do this before creating the pad
-    resizeCanvasForHiDpi(canvas);
     canvas.style.touchAction = 'none';
 
     signaturePad = new SignaturePad(canvas, {
-        backgroundColor: 'rgb(255, 255, 255)'
+        backgroundColor: 'rgba(0, 0, 0, 0)'
     });
+    signaturePad.clear();
     console.info('[SignaturePad] initialized');
 }
 
@@ -67,7 +69,7 @@ const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
         if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
             if (!mutation.target.classList.contains('hidden')) {
-                setTimeout(initSigPad, 100);
+                setTimeout(() => initSigPad(true), 100);
             }
         }
     });
@@ -99,9 +101,7 @@ def signature_modal() -> rx.Component:
                 rx.el.div(
                     rx.el.canvas(
                         id="signature-pad",
-                        class_name="border border-gray-200 rounded-lg shadow-inner w-full bg-white",
-                        width="500",
-                        height="200",
+                        class_name="border border-gray-200 rounded-lg shadow-inner w-full h-[220px] bg-transparent",
                     ),
                     class_name="mb-6 bg-gray-50 p-2 rounded-xl",
                 ),
