@@ -3,10 +3,21 @@ import random
 import string
 import json
 import logging
-import base64
+from typing import TypedDict
+
 import fitz
 from reflex.config import get_config
-from typing import Optional
+
+
+class SignatureBox(TypedDict):
+    id: str
+    x: float
+    y: float
+    w: float
+    h: float
+    page: int
+    signature_strokes: list[list[dict[str, float]]]
+    signature_paths: list[str]
 
 
 class PDFState(rx.State):
@@ -20,14 +31,30 @@ class PDFState(rx.State):
     zoom_level: float = 1.0
     scale_percent: int = 100
     is_draw_mode: bool = False
-    signature_boxes: list[dict[str, str | float | int]] = []
+    signature_boxes: list[SignatureBox] = []
     selected_box_id: str = ""
     is_signing: bool = False
     is_rendering: bool = False
     render_error: str = ""
     page_image_filename: str = ""
+    page_image_width: int = 0
+    page_image_height: int = 0
     signed_filename: str = ""
     file_token: str = ""
+    is_box_selecting: bool = False
+    box_start_x: int = 0
+    box_start_y: int = 0
+    signature_is_drawing: bool = False
+    signature_strokes: list[list[dict[str, float]]] = []
+    signature_paths: list[str] = []
+    signature_last_x: float = 0.0
+    signature_last_y: float = 0.0
+    signature_pad_width: int = 520
+    signature_pad_height: int = 220
+
+    def _emit_interaction_log(self, message: str):
+        logging.getLogger("interaction").info(message)
+        return rx.call_script(f"console.log({json.dumps(message)})")
 
     @rx.event
     def toggle_draw_mode(self):
@@ -42,23 +69,135 @@ class PDFState(rx.State):
         if not self.is_draw_mode:
             self.selected_box_id = box_id
             self.is_signing = True
+            self.signature_is_drawing = False
+            self.signature_strokes = []
+            self.signature_paths = []
+            for box in self.signature_boxes:
+                if box["id"] == box_id:
+                    strokes = box.get("signature_strokes", [])
+                    self.signature_strokes = [
+                        [point.copy() for point in stroke] for stroke in strokes
+                    ]
+                    box_paths = box.get("signature_paths")
+                    if box_paths is None or len(box_paths) != len(self.signature_strokes):
+                        box_paths = self._build_paths_from_strokes(
+                            self.signature_strokes
+                        )
+                    self.signature_paths = list(box_paths)
+                    break
 
     @rx.event
     def close_signing_modal(self):
         """Close the signature pad modal."""
         self.is_signing = False
         self.selected_box_id = ""
+        self.signature_is_drawing = False
+        self.signature_paths = []
+        self.signature_last_x = 0.0
+        self.signature_last_y = 0.0
 
     @rx.event
-    def save_signature(self, signature_data: str):
-        """Save base64 signature data to the selected box."""
+    def apply_signature(self):
+        """Apply the captured signature strokes to the selected box."""
         for box in self.signature_boxes:
             if box["id"] == self.selected_box_id:
-                box["signature"] = signature_data
+                box["signature_strokes"] = [
+                    [point.copy() for point in stroke]
+                    for stroke in self.signature_strokes
+                ]
+                box["signature_paths"] = list(self.signature_paths)
                 break
         self.signature_boxes = list(self.signature_boxes)
         self.is_signing = False
         self.selected_box_id = ""
+        self.signature_is_drawing = False
+        self.signature_paths = []
+        self.signature_last_x = 0.0
+        self.signature_last_y = 0.0
+
+    @rx.event
+    def clear_signature_pad(self):
+        """Clear the current signature strokes."""
+        self.signature_strokes = []
+        self.signature_paths = []
+        self.signature_is_drawing = False
+        self.signature_last_x = 0.0
+        self.signature_last_y = 0.0
+
+    @rx.event
+    def start_signature(self, mouse: dict[str, int]):
+        """Start capturing a signature stroke."""
+        if not self.is_signing:
+            return
+        self.signature_is_drawing = True
+        self._append_signature_point(mouse)
+        return self._emit_interaction_log(
+            f"signature:start x={mouse.get('x', 0)} y={mouse.get('y', 0)}"
+        )
+
+    @rx.event
+    def stop_signature(self, mouse: dict[str, int]):
+        """Stop capturing a signature stroke."""
+        if not self.is_signing:
+            return
+        self._append_signature_point(mouse)
+        self.signature_is_drawing = False
+        return self._emit_interaction_log(
+            f"signature:stop x={mouse.get('x', 0)} y={mouse.get('y', 0)}"
+        )
+
+    @rx.event
+    def sample_signature_point(self, x: int, y: int, defined: bool):
+        """Sample a point while drawing in the signature pad."""
+        if not (self.is_signing and self.signature_is_drawing and defined):
+            return
+        self._append_signature_point({"x": x, "y": y})
+        return self._emit_interaction_log(f"signature:sample x={x} y={y}")
+
+    def _append_signature_point(self, mouse: dict[str, int]):
+        if not mouse:
+            return
+        if self.signature_pad_width <= 0 or self.signature_pad_height <= 0:
+            return
+        x_pct = (mouse.get("x", 0) / self.signature_pad_width) * 100.0
+        y_pct = (mouse.get("y", 0) / self.signature_pad_height) * 100.0
+        x_pct = max(0.0, min(100.0, x_pct))
+        y_pct = max(0.0, min(100.0, y_pct))
+        if self.signature_strokes and self.signature_strokes[-1]:
+            dx = x_pct - self.signature_last_x
+            dy = y_pct - self.signature_last_y
+            if (dx * dx + dy * dy) < 0.15:
+                return
+        if not self.signature_strokes or not self.signature_is_drawing:
+            self.signature_strokes.append([])
+            self.signature_paths.append("")
+        if len(self.signature_paths) < len(self.signature_strokes):
+            self.signature_paths.append("")
+        current_path = self.signature_paths[-1]
+        if not self.signature_strokes[-1]:
+            current_path = f"M {x_pct:.2f} {y_pct:.2f}"
+        else:
+            current_path = f"{current_path} L {x_pct:.2f} {y_pct:.2f}"
+        self.signature_strokes[-1].append({"x": x_pct, "y": y_pct})
+        self.signature_paths[-1] = current_path
+        self.signature_last_x = x_pct
+        self.signature_last_y = y_pct
+        self.signature_strokes = [list(stroke) for stroke in self.signature_strokes]
+        self.signature_paths = list(self.signature_paths)
+
+    def _build_paths_from_strokes(
+        self, strokes: list[list[dict[str, float]]]
+    ) -> list[str]:
+        paths: list[str] = []
+        for stroke in strokes:
+            if not stroke:
+                paths.append("")
+                continue
+            parts = [f"M {stroke[0]['x']:.2f} {stroke[0]['y']:.2f}"]
+            for point in stroke[1:]:
+                parts.append(f"L {point['x']:.2f} {point['y']:.2f}")
+            paths.append(" ".join(parts))
+        return paths
 
     @rx.event
     def add_box(self, data: str):
@@ -74,11 +213,78 @@ class PDFState(rx.State):
                 "w": box_data["w"],
                 "h": box_data["h"],
                 "page": self.current_page,
-                "signature": "",
+                "signature_strokes": [],
+                "signature_paths": [],
             }
             self.signature_boxes.append(new_box)
         except Exception as e:
             logging.exception(f"Error adding box: {e}")
+
+    @rx.event
+    def start_box_selection(self, mouse: dict[str, int]):
+        """Start dragging to create a signature box."""
+        if not self.is_draw_mode or self.is_signing:
+            return
+        self.is_box_selecting = True
+        self.box_start_x = int(mouse.get("x", 0))
+        self.box_start_y = int(mouse.get("y", 0))
+        return self._emit_interaction_log(
+            f"drawbox:start x={self.box_start_x} y={self.box_start_y}"
+        )
+
+    @rx.event
+    def end_box_selection(self, mouse: dict[str, int]):
+        """Finish dragging and create a signature box."""
+        if not self.is_box_selecting:
+            return
+        self.is_box_selecting = False
+        end_x = int(mouse.get("x", 0))
+        end_y = int(mouse.get("y", 0))
+        width = abs(end_x - self.box_start_x)
+        height = abs(end_y - self.box_start_y)
+        logs = [
+            self._emit_interaction_log(
+                "drawbox:end "
+                f"start=({self.box_start_x},{self.box_start_y}) "
+                f"end=({end_x},{end_y}) size=({width}x{height})"
+            )
+        ]
+        if width < 5 or height < 5:
+            return logs
+        if self.page_image_width <= 0 or self.page_image_height <= 0:
+            return logs
+        scaled_width = self.page_image_width * self.zoom_level
+        scaled_height = self.page_image_height * self.zoom_level
+        if scaled_width <= 0 or scaled_height <= 0:
+            return logs
+        left = min(self.box_start_x, end_x)
+        top = min(self.box_start_y, end_y)
+        pct_x = (left / scaled_width) * 100.0
+        pct_y = (top / scaled_height) * 100.0
+        pct_w = (width / scaled_width) * 100.0
+        pct_h = (height / scaled_height) * 100.0
+        pct_x = max(0.0, min(100.0, pct_x))
+        pct_y = max(0.0, min(100.0, pct_y))
+        pct_w = max(0.0, min(100.0 - pct_x, pct_w))
+        pct_h = max(0.0, min(100.0 - pct_y, pct_h))
+        logs.append(
+            self._emit_interaction_log(
+                "drawbox:percent "
+                f"x={pct_x:.2f} y={pct_y:.2f} w={pct_w:.2f} h={pct_h:.2f}"
+            )
+        )
+        new_box = {
+            "id": "".join(random.choices(string.ascii_letters + string.digits, k=6)),
+            "x": pct_x,
+            "y": pct_y,
+            "w": pct_w,
+            "h": pct_h,
+            "page": self.current_page,
+            "signature_strokes": [],
+            "signature_paths": [],
+        }
+        self.signature_boxes.append(new_box)
+        return logs
 
     @rx.event
     def delete_box(self, box_id: str):
@@ -116,6 +322,8 @@ class PDFState(rx.State):
             image_path = rx.get_upload_dir() / image_name
             pix.save(image_path)
             self.page_image_filename = image_name
+            self.page_image_width = int(pix.width)
+            self.page_image_height = int(pix.height)
         except Exception as e:
             self.render_error = str(e)
             logging.exception("Error rendering PDF preview")
@@ -134,6 +342,8 @@ class PDFState(rx.State):
         self.is_rendering = False
         self.render_error = ""
         self.page_image_filename = ""
+        self.page_image_width = 0
+        self.page_image_height = 0
         self.signed_filename = ""
         self.file_token = ""
         yield
@@ -159,6 +369,8 @@ class PDFState(rx.State):
             self.has_pdf = True
             self.current_page = 1
             self.signature_boxes = []
+            self.signature_strokes = []
+            self.signature_paths = []
             self.is_rendering = True
             self.render_error = ""
             yield
@@ -227,23 +439,35 @@ class PDFState(rx.State):
         try:
             doc = fitz.open(pdf_path)
             for box in self.signature_boxes:
-                signature = box.get("signature")
-                if not signature:
+                strokes = box.get("signature_strokes", [])
+                if not strokes:
                     continue
-                if "," in signature:
-                    signature = signature.split(",", 1)[1]
                 page_index = int(box.get("page", 1)) - 1
                 if page_index < 0 or page_index >= doc.page_count:
                     continue
                 page = doc.load_page(page_index)
                 page_rect = page.rect
-                img_bytes = base64.b64decode(signature)
                 x = page_rect.width * (float(box["x"]) / 100.0)
                 y = page_rect.height * (float(box["y"]) / 100.0)
                 w = page_rect.width * (float(box["w"]) / 100.0)
                 h = page_rect.height * (float(box["h"]) / 100.0)
                 rect = fitz.Rect(x, y, x + w, y + h)
-                page.insert_image(rect, stream=img_bytes)
+                for stroke in strokes:
+                    if len(stroke) < 2:
+                        continue
+                    for idx in range(1, len(stroke)):
+                        p0 = stroke[idx - 1]
+                        p1 = stroke[idx]
+                        x0 = rect.x0 + rect.width * (float(p0["x"]) / 100.0)
+                        y0 = rect.y0 + rect.height * (float(p0["y"]) / 100.0)
+                        x1 = rect.x0 + rect.width * (float(p1["x"]) / 100.0)
+                        y1 = rect.y0 + rect.height * (float(p1["y"]) / 100.0)
+                        page.draw_line(
+                            fitz.Point(x0, y0),
+                            fitz.Point(x1, y1),
+                            color=(0, 0, 0),
+                            width=2,
+                        )
 
             signed_name = f"{self.file_token}_signed.pdf"
             signed_path = upload_dir / signed_name
@@ -282,3 +506,13 @@ class PDFState(rx.State):
             return ""
         api_url = get_config().api_url.rstrip("/")
         return f"{api_url}/_upload/{self.signed_filename}"
+
+    @rx.var
+    def page_image_width_px(self) -> str:
+        """Get the rendered page width in px."""
+        return f"{self.page_image_width}px"
+
+    @rx.var
+    def page_image_height_px(self) -> str:
+        """Get the rendered page height in px."""
+        return f"{self.page_image_height}px"

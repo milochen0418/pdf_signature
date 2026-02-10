@@ -1,18 +1,35 @@
 import reflex as rx
 from pdf_signature.states.pdf_state import PDFState
+from reflex_mouse_track import MousePosition, mouse_track
+
+
+def signature_svg(paths: list[str]) -> rx.Component:
+    return rx.el.svg(
+        rx.foreach(
+            paths,
+            lambda path_d: rx.el.path(
+                d=path_d,
+                stroke="#111827",
+                stroke_width="2",
+                fill="none",
+                stroke_linecap="round",
+                stroke_linejoin="round",
+            ),
+        ),
+        viewBox="0 0 100 100",
+        class_name="w-full h-full",
+    )
 
 
 def render_signature_box(box: dict) -> rx.Component:
     """Render a single signature box overlay."""
-    is_signed = box["signature"] != ""
+    paths = box["signature_paths"]
+    is_signed = paths.length() > 0
     return rx.el.div(
         rx.cond(
             is_signed,
             rx.el.div(
-                rx.image(
-                    src=box["signature"],
-                    class_name="max-h-full max-w-full object-contain",
-                ),
+                signature_svg(paths),
                 rx.el.div(
                     rx.icon(
                         "lamp_wall_down",
@@ -39,6 +56,51 @@ def render_signature_box(box: dict) -> rx.Component:
             "absolute border-2 border-green-500 bg-green-50/20 flex items-center justify-center z-10 hover:bg-green-100/30 transition-colors pointer-events-auto cursor-pointer",
             "absolute border-2 border-blue-500 bg-blue-400/20 flex items-center justify-center z-10 hover:bg-blue-400/30 transition-colors pointer-events-auto cursor-pointer",
         ),
+    )
+
+
+def selecting_box() -> rx.Component:
+    return rx.cond(
+        PDFState.is_box_selecting,
+        rx.el.div(
+            class_name="absolute border-2 border-dashed border-blue-500 bg-blue-400/20 pointer-events-none",
+            style={
+                "left": rx.cond(
+                    PDFState.box_start_x < MousePosition.x,
+                    PDFState.box_start_x,
+                    MousePosition.x,
+                ),
+                "top": rx.cond(
+                    PDFState.box_start_y < MousePosition.y,
+                    PDFState.box_start_y,
+                    MousePosition.y,
+                ),
+                "width": abs(MousePosition.x - PDFState.box_start_x),
+                "height": abs(MousePosition.y - PDFState.box_start_y),
+            },
+        ),
+    )
+
+
+@rx.memo
+def draw_surface() -> rx.Component:
+    return mouse_track(
+        selecting_box(),
+        width=PDFState.page_image_width_px,
+        height=PDFState.page_image_height_px,
+        position="absolute",
+        left="0",
+        top="0",
+        class_name=rx.cond(
+            PDFState.is_draw_mode,
+            "absolute inset-0 cursor-crosshair z-20 touch-none",
+            "absolute inset-0 z-20 touch-none",
+        ),
+        style={
+            "pointerEvents": rx.cond(PDFState.is_draw_mode, "auto", "none"),
+        },
+        on_mouse_down=PDFState.start_box_selection,
+        on_mouse_up=PDFState.end_box_selection,
     )
 
 
@@ -92,20 +154,10 @@ def pdf_viewer_canvas() -> rx.Component:
                 rx.foreach(PDFState.signature_boxes, render_signature_box),
                 class_name="absolute inset-0 z-10",
             ),
-            rx.el.div(
-                id="draw-surface",
-                data_draw_enabled=PDFState.is_draw_mode.to(str),
-                class_name=rx.cond(
-                    PDFState.is_draw_mode,
-                    "absolute inset-0 cursor-crosshair z-20 touch-none",
-                    "absolute inset-0 z-20 touch-none",
-                ),
-                style={
-                    "pointerEvents": rx.cond(PDFState.is_draw_mode, "auto", "none"),
-                },
-            ),
-            rx.el.input(
-                id="new-box-data", class_name="hidden", on_change=PDFState.add_box
+            rx.cond(
+                ~PDFState.is_signing,
+                draw_surface(),
+                rx.fragment(),
             ),
             class_name="relative inline-block m-auto",
             style={
