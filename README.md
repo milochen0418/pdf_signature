@@ -23,6 +23,10 @@ Once you are happy with the signature placement, export the final signed PDF wit
 
 ![Export Signed PDF](docs/images/export-signed-pdf.png)
 
+## Documentation
+
+- [Software Design Document (SDD)](docs/PDF%20Signature%20-%20Software%20Design%20Document%20(SDD).pdf)
+
 ## Getting Started
 
 > Before making changes, read the project guidelines in [AGENTS.md](AGENTS.md).
